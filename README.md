@@ -18,12 +18,172 @@ A production-ready, 100% offline Python-based REST API server for accurate speec
 - **Docker Ready** - Containerized deployment with Docker and Docker Compose
 - **Production Grade** - Error handling, logging, health checks, and validation
 
-## Requirements
+## Hard Requirements
 
-- Python 3.11+
-- FFmpeg (for audio format conversion)
-- 4-8 GB RAM (CPU mode) or 4 GB GPU memory (CUDA mode)
-- Disk space: ~3-10 GB for models (depending on model size)
+### Mandatory System Requirements
+
+These are **absolutely required** for the application to function:
+
+#### 1. Python Version
+- **Python 3.11 or higher** (3.11.x, 3.12.x, etc.)
+- Python 3.10 and below are **not supported**
+- Verify installation:
+  ```bash
+  python3 --version
+  # Should output: Python 3.11.x or higher
+  ```
+
+#### 2. System Dependencies
+
+**FFmpeg** (REQUIRED - No Alternative)
+- Required for audio format conversion and processing
+- Must be installed system-wide and accessible in PATH
+- Minimum version: FFmpeg 4.0+ (recommended: latest stable)
+- Verify installation:
+  ```bash
+  ffmpeg -version
+  ```
+
+**Installation Instructions:**
+
+**Ubuntu/Debian:**
+```bash
+sudo apt-get update
+sudo apt-get install -y ffmpeg python3-pip python3-venv
+```
+
+**CentOS/RHEL/Fedora:**
+```bash
+# Fedora
+sudo dnf install ffmpeg python3-pip
+
+# CentOS/RHEL 8+
+sudo dnf install epel-release
+sudo dnf install ffmpeg python3-pip
+```
+
+**macOS:**
+```bash
+# Using Homebrew (recommended)
+brew install ffmpeg python3
+
+# Verify installation
+ffmpeg -version
+```
+
+**Windows:**
+1. Download FFmpeg from [https://ffmpeg.org/download.html](https://ffmpeg.org/download.html)
+2. Extract and add `bin` folder to system PATH
+3. Verify in Command Prompt:
+   ```cmd
+   ffmpeg -version
+   ```
+
+#### 3. System Resources
+
+**Minimum RAM:**
+- **CPU Mode**: 4 GB RAM minimum, 8 GB recommended
+- **GPU Mode**: 4 GB system RAM + 4 GB GPU memory minimum
+- **For large-v3 model**: 8-16 GB RAM strongly recommended
+
+**Disk Space:**
+- **Minimum**: 3 GB free space (for tiny/base models)
+- **Recommended**: 10 GB free space (for large-v3 model)
+- Additional space needed for:
+  - Python packages (~1-2 GB)
+  - Audio cache files (if saving enabled)
+  - Translation packages (~500 MB)
+
+**CPU:**
+- Any modern x86-64 CPU
+- Multi-core recommended (2+ cores) for better performance
+- ARM64 supported (experimental - may require building from source)
+
+#### 4. Operating System Support
+
+**Fully Supported:**
+- Linux (Ubuntu 20.04+, Debian 11+, CentOS 8+, Fedora 35+)
+- macOS (10.15+ / Big Sur and later)
+- Windows 10/11 (64-bit)
+
+**Partially Supported / Experimental:**
+- ARM64 Linux (may require building some dependencies)
+- Windows Subsystem for Linux (WSL2) - recommended for Windows users
+
+### Python Package Requirements
+
+All required Python packages are listed in `requirements.txt`. Core dependencies include:
+
+**Critical Dependencies (Cannot Function Without):**
+- `fastapi` - Web framework
+- `uvicorn` - ASGI server
+- `faster-whisper` - Whisper model implementation
+- `torch` - PyTorch for model inference
+- `pydub` - Audio processing (requires FFmpeg)
+- `numpy` - Numerical operations
+- `argostranslate` - Offline translation
+- `langdetect` - Language detection
+
+**Minimum Versions:**
+- Python: **3.11.0**
+- FFmpeg: **4.0.0**
+- See `requirements.txt` for exact Python package versions
+
+### Optional (But Recommended) Requirements
+
+**GPU Acceleration (CUDA):**
+- NVIDIA GPU with CUDA support
+- CUDA 11.8+ or CUDA 12.1+
+- cuDNN compatible with CUDA version
+- PyTorch with CUDA support (automatically detected)
+- Significantly improves performance (5-10x faster)
+
+**Verify CUDA (if using GPU):**
+```bash
+python3 -c "import torch; print(torch.cuda.is_available())"
+# Should output: True if CUDA is available
+```
+
+**For Development:**
+- Git (for cloning repository)
+- Text editor or IDE (VS Code, PyCharm, etc.)
+- Virtual environment tool (venv, virtualenv, conda)
+
+### Verification Checklist
+
+Before running the application, verify all requirements:
+
+```bash
+# 1. Check Python version
+python3 --version  # Must be 3.11+
+
+# 2. Check FFmpeg installation
+ffmpeg -version  # Must be installed
+
+# 3. Check pip
+pip3 --version  # Should be available
+
+# 4. (Optional) Check CUDA for GPU support
+python3 -c "import torch; print(f'CUDA Available: {torch.cuda.is_available()}')"
+
+# 5. Check available disk space
+df -h .  # Should have at least 10 GB free
+```
+
+### Requirements Summary
+
+| Requirement | Minimum | Recommended |
+|-------------|---------|-------------|
+| Python | 3.11.0 | 3.12+ |
+| FFmpeg | 4.0.0 | Latest |
+| RAM (CPU) | 4 GB | 8-16 GB |
+| RAM (GPU) | 4 GB + 4 GB VRAM | 8 GB + 8 GB VRAM |
+| Disk Space | 3 GB | 10 GB+ |
+| CPU Cores | 2 | 4+ |
+| OS | Linux/macOS/Windows | Ubuntu 22.04 / macOS 12+ |
+| CUDA (Optional) | 11.8 | 12.1+ |
+
+**Note:** Without Python 3.11+ and FFmpeg, the application **will not run**. All other requirements are for optimal performance.
 
 ## Installation
 
