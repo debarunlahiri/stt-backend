@@ -240,6 +240,42 @@ python run.py
 
 The server will start on `http://localhost:8000`. On first run, the Whisper model will be downloaded automatically (this may take several minutes).
 
+### Model Download Information
+
+**Model Source:** The Whisper models are automatically downloaded from **Hugging Face Hub** by the `faster-whisper` library.
+
+**Download Location:**
+- Models are downloaded from: `https://huggingface.co/`
+- Repository: The `faster-whisper` library uses models from the **Systran** organization on Hugging Face
+- Models are cached locally in: `./models/` directory (configurable via `MODEL_CACHE_DIR`)
+
+**Direct Model Links on Hugging Face:**
+- **large-v3**: [Systran/faster-whisper-large-v3](https://huggingface.co/Systran/faster-whisper-large-v3)
+- **large-v2**: [Systran/faster-whisper-large-v2](https://huggingface.co/Systran/faster-whisper-large-v2)
+- **medium**: [Systran/faster-whisper-medium](https://huggingface.co/Systran/faster-whisper-medium)
+- **small**: [Systran/faster-whisper-small](https://huggingface.co/Systran/faster-whisper-small)
+- **base**: [Systran/faster-whisper-base](https://huggingface.co/Systran/faster-whisper-base)
+- **tiny**: [Systran/faster-whisper-tiny](https://huggingface.co/Systran/faster-whisper-tiny)
+
+**Model Download Process:**
+1. On first run, `faster-whisper` automatically downloads the specified model from Hugging Face Hub
+2. Models are converted to CTranslate2 format for optimized inference
+3. Downloaded models are cached in the `models/` directory for future use
+4. Subsequent runs use the cached models (no re-download needed)
+
+**Manual Download (if automatic download fails):**
+```bash
+# Option 1: Clear cache and restart (will re-download)
+rm -rf ./models
+python run.py
+
+# Option 2: Manually download from Hugging Face using huggingface-cli
+pip install huggingface_hub
+huggingface-cli download Systran/faster-whisper-large-v3 --local-dir ./models/faster-whisper-large-v3
+```
+
+**Note:** You need internet connection on first run to download models. Once downloaded, the application works completely offline.
+
 ### Run with Docker
 
 ```bash
