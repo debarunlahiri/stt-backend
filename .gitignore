@@ -66,6 +66,9 @@ audio_recordings/
 *.amr
 *.aiff
 
+# Translation packages manifest (optional - can be committed to track installed packages)
+# translation_packages.json
+
 # Logs
 logs/
 *.log

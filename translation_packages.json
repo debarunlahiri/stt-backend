@@ -1,0 +1,47 @@
+{
+  "installed_packages": [
+    [
+      "en",
+      "hi"
+    ],
+    [
+      "hi",
+      "en"
+    ],
+    [
+      "en",
+      "ko"
+    ],
+    [
+      "ko",
+      "en"
+    ]
+  ],
+  "supported_pairs": [
+    [
+      "en",
+      "hi"
+    ],
+    [
+      "hi",
+      "en"
+    ],
+    [
+      "en",
+      "ko"
+    ],
+    [
+      "ko",
+      "en"
+    ],
+    [
+      "hi",
+      "ko"
+    ],
+    [
+      "ko",
+      "hi"
+    ]
+  ],
+  "timestamp": 1764081837.771209
+}
