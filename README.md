@@ -238,18 +238,19 @@ Edit `.env` to customize:
 python run.py
 ```
 
-The server will start on `http://localhost:8000`. On first run, the Whisper model will be downloaded automatically (this may take several minutes).
+The server will start on `http://localhost:8000`. The application loads models from local storage by default (offline mode).
 
-### Model Download Information
+### Model Loading Information
 
-**Model Source:** The Whisper models are automatically downloaded from **Hugging Face Hub** by the `faster-whisper` library.
+**Offline Mode (Default):** The application is configured to load models from a local directory without requiring internet connection or Hugging Face CLI.
 
-**Download Location:**
-- Models are downloaded from: `https://huggingface.co/`
-- Repository: The `faster-whisper` library uses models from the **Systran** organization on Hugging Face
-- Models are cached locally in: `./models/` directory (configurable via `MODEL_CACHE_DIR`)
+**Local Model Path:**
+- Default path: `./models/models--Systran--faster-whisper-large-v3/snapshots/edaa852ec7e145841d8ffdb056a99866b5f0a478`
+- Configurable via `MODEL_LOCAL_PATH` environment variable or `.env` file
+- Required files in the model directory: `model.bin`, `config.json`, `tokenizer.json`, `vocabulary.json`
 
-**Direct Model Links on Hugging Face:**
+**Model Source Information:**
+The models used are from the **Systran** organization on Hugging Face:
 - **large-v3**: [Systran/faster-whisper-large-v3](https://huggingface.co/Systran/faster-whisper-large-v3)
 - **large-v2**: [Systran/faster-whisper-large-v2](https://huggingface.co/Systran/faster-whisper-large-v2)
 - **medium**: [Systran/faster-whisper-medium](https://huggingface.co/Systran/faster-whisper-medium)
@@ -257,24 +258,18 @@ The server will start on `http://localhost:8000`. On first run, the Whisper mode
 - **base**: [Systran/faster-whisper-base](https://huggingface.co/Systran/faster-whisper-base)
 - **tiny**: [Systran/faster-whisper-tiny](https://huggingface.co/Systran/faster-whisper-tiny)
 
-**Model Download Process:**
-1. On first run, `faster-whisper` automatically downloads the specified model from Hugging Face Hub
-2. Models are converted to CTranslate2 format for optimized inference
-3. Downloaded models are cached in the `models/` directory for future use
-4. Subsequent runs use the cached models (no re-download needed)
-
-**Manual Download (if automatic download fails):**
-```bash
-# Option 1: Clear cache and restart (will re-download)
-rm -rf ./models
-python run.py
-
-# Option 2: Manually download from Hugging Face using huggingface-cli
-pip install huggingface_hub
-huggingface-cli download Systran/faster-whisper-large-v3 --local-dir ./models/faster-whisper-large-v3
+**Configuring Model Path:**
+To use a different local model path, set the `MODEL_LOCAL_PATH` variable in your `.env` file:
+```env
+MODEL_LOCAL_PATH=./path/to/your/model/directory
 ```
 
-**Note:** You need internet connection on first run to download models. Once downloaded, the application works completely offline.
+To use online model download instead (fallback mode), set `MODEL_LOCAL_PATH` to empty or remove it from config:
+```env
+MODEL_LOCAL_PATH=
+```
+
+**Note:** The application works completely offline when `MODEL_LOCAL_PATH` is configured. Ensure the model files are present in the specified directory before starting the server.
 
 ### Run with Docker
 
@@ -403,6 +398,9 @@ curl -X POST "http://localhost:8000/v1/transcribe?language=auto" \
       "language": "hi"
     }
   ],
+  "english_text": "Hello, hello, hello",
+  "hindi_text": "नमस्ते, नमस्ते, नमस्ते",
+  "korean_text": "안녕하세요, 안녕하세요, 안녕하세요",
   "processing_time_sec": 3.4,
   "real_time_factor": 0.42,
   "audio_duration_sec": 8.1,
@@ -411,30 +409,31 @@ curl -X POST "http://localhost:8000/v1/transcribe?language=auto" \
 }
 ```
 
+**Note:** The transcribe API automatically translates the transcribed text to all 3 languages (English, Hindi, Korean) and includes them in the response. The translations are performed in parallel for optimal performance.
+
 #### 3. Translate Text
 
 **POST** `/v1/translate`
 
-Translate text from one language to another. Supports translation between English, Hindi, and Korean.
+Translate text to all 3 languages (English, Hindi, Korean). The API always returns translations in all supported languages.
 
 **Request Body:**
 ```json
 {
   "text": "नमस्ते, आप कैसे हैं?",
-  "source_language": "hi",
-  "target_language": "en"
+  "source_language": "hi"
 }
 ```
 
 **Parameters:**
 - `text` (string, required): Text to translate
 - `source_language` (string, optional): Source language code (en, hi, ko) or "auto" for auto-detection. Default: "auto"
-- `target_language` (string, required): Target language code (en, hi, ko). Default: "en"
+- `target_language` (string, optional): Deprecated - translations are always returned in all languages. Default: "en"
 
-**Supported Translation Pairs:**
-- English ↔ Hindi (en ↔ hi)
-- English ↔ Korean (en ↔ ko)
-- Hindi ↔ Korean (hi ↔ ko)
+**Supported Languages:**
+- English (en)
+- Hindi (hi)
+- Korean (ko)
 
 **Example Request:**
 ```bash
@@ -442,20 +441,20 @@ curl -X POST "http://localhost:8000/v1/translate" \
   -H "Content-Type: application/json" \
   -d '{
     "text": "नमस्ते, आप कैसे हैं?",
-    "source_language": "hi",
-    "target_language": "en"
+    "source_language": "hi"
   }'
 ```
 
 **Response:**
 ```json
 {
-  "translated_text": "Hello, how are you?",
+  "english_text": "Hello, how are you?",
+  "hindi_text": "नमस्ते, आप कैसे हैं?",
+  "korean_text": "안녕하세요, 어떻게 지내세요?",
   "source_language": "hi",
-  "target_language": "en",
   "detected_language": "hi",
   "detection_confidence": 0.99,
-  "processing_time_sec": 0.15,
+  "processing_time_sec": 0.25,
   "translation_applied": true
 }
 ```
@@ -466,8 +465,7 @@ curl -X POST "http://localhost:8000/v1/translate" \
   -H "Content-Type: application/json" \
   -d '{
     "text": "Hello, how are you?",
-    "source_language": "auto",
-    "target_language": "hi"
+    "source_language": "auto"
   }'
 ```
 
@@ -828,6 +826,14 @@ The translation API supports bidirectional translation between:
 - **Hindi ↔ Korean** (hi ↔ ko)
 
 Translation is fully offline and uses Argos Translate for high-quality translations. Source language can be auto-detected if not specified.
+
+**Translation Packages Storage:**
+
+Translation models are stored in platform-specific locations:
+- **macOS/Linux**: `~/.local/share/argos-translate/packages`
+- **Windows**: `C:\Users\username\.local\share\argos-translate\packages`
+
+The application runs in **fully offline mode** - translation packages must be pre-installed before running the server. See `TRANSLATION_PACKAGES_LOCATION.md` for detailed installation instructions and platform-specific paths.
 
 ## License
 

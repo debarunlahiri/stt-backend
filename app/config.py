@@ -52,6 +52,11 @@ class Settings(BaseSettings):
     # - large-v2/v3: ~2.0x (slowest, best accuracy) - Current default
     model_size: str = "large-v3"  # Options: tiny, base, small, medium, large-v2, large-v3
     model_cache_dir: str = "./models"
+    # Local model path - Use this to load model from a local directory instead of downloading
+    # Set to the path containing model files (model.bin, config.json, tokenizer.json, vocabulary.json)
+    # If set, this takes priority over model_size and no internet connection is required
+    # Example: "./models/models--Systran--faster-whisper-large-v3/snapshots/edaa852ec7e145841d8ffdb056a99866b5f0a478"
+    model_local_path: Optional[str] = "./models/models--Systran--faster-whisper-large-v3/snapshots/edaa852ec7e145841d8ffdb056a99866b5f0a478"
     device: str = "cpu"  # cpu or cuda (use cuda for GPU acceleration - 5-10x faster)
     compute_type: str = "int8"  # int8 (CPU), int8_float16/float16/float32 (GPU)
     model_pool_size: int = 4  # Number of model instances for concurrent processing

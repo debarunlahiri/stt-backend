@@ -269,11 +269,13 @@ ls -lh models/
 rm -rf models/
 ```
 
-### Manual Model Download (if automatic fails)
-```bash
-pip install huggingface_hub
-huggingface-cli download Systran/faster-whisper-large-v3 --local-dir ./models/faster-whisper-large-v3
+### Using Local Model (Offline Mode)
+The application is configured to use offline model loading by default. The model is loaded from:
 ```
+./models/models--Systran--faster-whisper-large-v3/snapshots/edaa852ec7e145841d8ffdb056a99866b5f0a478
+```
+
+To change the model path, set `MODEL_LOCAL_PATH` in your `.env` file or environment variables.
 
 ## Translation Package Commands
 
@@ -379,17 +381,16 @@ sudo apt-get install ffmpeg  # Linux
 ffmpeg -version
 ```
 
-### Issue: Model download fails
+### Issue: Model loading fails
 
 **Solution:**
 ```bash
-# Set proxy if behind corporate firewall
-export HTTP_PROXY=http://proxy.company.com:8080
-export HTTPS_PROXY=http://proxy.company.com:8080
+# Verify model files exist in the configured path
+ls -la ./models/models--Systran--faster-whisper-large-v3/snapshots/edaa852ec7e145841d8ffdb056a99866b5f0a478/
 
-# Or download manually
-pip install huggingface_hub
-huggingface-cli download Systran/faster-whisper-large-v3 --local-dir ./models/
+# Required files: model.bin, config.json, tokenizer.json, vocabulary.json
+# If files are missing, ensure the model directory is properly set up
+# Update MODEL_LOCAL_PATH in .env file to point to the correct model directory
 ```
 
 ## Notes

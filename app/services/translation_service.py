@@ -100,6 +100,35 @@ class TranslationService:
         finally:
             self._initialization_attempted = True
     
+    def _get_packages_storage_path(self) -> str:
+        """
+        Get the translation packages storage path for the current platform.
+        
+        Returns platform-specific path:
+        - macOS/Linux: ~/.local/share/argos-translate/packages
+        - Windows: C:\\Users\\username\\.local\\share\\argos-translate\\packages
+        
+        Returns:
+            Full path to translation packages directory
+        """
+        import platform
+        system = platform.system()
+        
+        if system == "Windows":
+            # Windows: C:\Users\username\.local\share\argos-translate\packages
+            packages_path = os.path.join(
+                os.path.expanduser("~"),
+                ".local",
+                "share",
+                "argos-translate",
+                "packages"
+            )
+        else:
+            # macOS/Linux: ~/.local/share/argos-translate/packages
+            packages_path = os.path.expanduser("~/.local/share/argos-translate/packages")
+        
+        return packages_path
+    
     def _load_installed_packages_from_disk(self) -> None:
         """
         Load installed packages list from disk (works offline).
@@ -117,8 +146,8 @@ class TranslationService:
             installed_packages_list = argostranslate.package.get_installed_packages()
             installed_pairs = [(pkg.from_code, pkg.to_code) for pkg in installed_packages_list]
             
-            # Get package storage location for logging
-            packages_storage_path = os.path.expanduser("~/.local/share/argos-translate/packages")
+            # Get package storage location for logging (platform-specific)
+            packages_storage_path = self._get_packages_storage_path()
             
             # Filter to only include supported pairs
             self._installed_packages = [
@@ -161,25 +190,23 @@ class TranslationService:
     
     def _initialize_translation_packages(self) -> None:
         """
-        Initialize and install required translation packages.
+        Initialize translation packages from local disk only (fully offline).
         
         This method:
         1. Checks for already installed packages from disk (offline)
-        2. Optionally updates the Argos Translate package index (requires internet)
-        3. Downloads and installs missing packages for all supported language pairs
-        4. Updates the internal list and saves to manifest file
+        2. Updates the internal list and saves to manifest file
         
-        The installation process may take time depending on network speed and
-        package sizes. Packages are cached locally after installation.
+        This method works completely offline and does NOT attempt to connect
+        to the internet. Packages must be pre-installed on the system.
         
-        Works offline if packages are already installed. Only requires internet
-        for downloading new packages.
+        If you need to install new packages, do so manually on a machine with
+        internet access before deploying to an offline server.
         """
         try:
             # Step 1: Get currently installed packages from disk (works offline)
             installed_packages_list = argostranslate.package.get_installed_packages()
             installed_pairs = [(pkg.from_code, pkg.to_code) for pkg in installed_packages_list]
-            packages_storage_path = os.path.expanduser("~/.local/share/argos-translate/packages")
+            packages_storage_path = self._get_packages_storage_path()
             logger.info(f"Found {len(installed_pairs)} already installed packages on disk: {installed_pairs}")
             logger.info(f"Translation packages storage location: {packages_storage_path}")
             
@@ -187,61 +214,29 @@ class TranslationService:
             for pkg in installed_packages_list:
                 logger.debug(f"Installed package: {pkg.from_code} -> {pkg.to_code} (package: {pkg})")
             
-            # Step 2: Try to update package index (requires internet, but fails gracefully if offline)
-            available_packages = []
-            try:
-                logger.info("Attempting to update argostranslate package index (requires internet)...")
-                argostranslate.package.update_package_index()
-                available_packages = argostranslate.package.get_available_packages()
-                logger.info(f"Found {len(available_packages)} available translation packages")
-            except Exception as e:
-                logger.warning(f"Could not update package index (likely offline): {str(e)}")
-                logger.info("Continuing with offline mode - using only pre-installed packages")
-            
-            # Step 3: Install required packages for all supported language pairs
+            # Step 2: Filter to only include supported pairs (no internet access)
             installed_packages = []
             for from_code, to_code in self.SUPPORTED_PAIRS:
-                # Check if already installed to avoid unnecessary downloads
+                # Check if already installed
                 if (from_code, to_code) in installed_pairs:
                     installed_packages.append((from_code, to_code))
                     package_dir = os.path.join(packages_storage_path, f"{from_code}_{to_code}")
                     logger.info(
-                        f"Translation package already installed: {from_code} -> {to_code} "
+                        f"Translation package available: {from_code} -> {to_code} "
                         f"(location: {package_dir})"
                     )
-                    continue
-                
-                # Only try to download if we have internet (available_packages list is populated)
-                if available_packages:
-                    # Try to find the package in available packages
-                    package_to_install = next(
-                        (pkg for pkg in available_packages 
-                         if pkg.from_code == from_code and pkg.to_code == to_code),
-                        None
-                    )
-                    
-                    if package_to_install:
-                        try:
-                            logger.info(f"Installing translation package: {from_code} -> {to_code}...")
-                            # Download the package file
-                            package_path = package_to_install.download()
-                            # Install the downloaded package
-                            argostranslate.package.install_from_path(package_path)
-                            installed_packages.append((from_code, to_code))
-                            logger.info(f"Successfully installed translation package: {from_code} -> {to_code}")
-                        except Exception as e:
-                            logger.error(f"Failed to install package {from_code}->{to_code}: {str(e)}", exc_info=True)
-                    else:
-                        logger.warning(f"Translation package not available: {from_code} -> {to_code}")
                 else:
-                    # Offline mode - can't download new packages
-                    logger.warning(f"Translation package {from_code} -> {to_code} not installed and internet unavailable")
+                    # Package not installed - log warning but don't try to download
+                    logger.warning(
+                        f"Translation package not installed: {from_code} -> {to_code}. "
+                        f"Install manually if needed."
+                    )
             
             # Update internal tracking of installed packages
             self._installed_packages = installed_packages
             # Save to manifest file for persistence
             self._save_packages_manifest()
-            logger.info(f"Translation service initialized with {len(installed_packages)} packages: {installed_packages}")
+            logger.info(f"Translation service initialized (offline mode) with {len(installed_packages)} packages: {installed_packages}")
             
         except Exception as e:
             logger.error(f"Failed to initialize translation packages: {str(e)}", exc_info=True)
@@ -250,23 +245,19 @@ class TranslationService:
             if not hasattr(self, '_installed_packages') or not self._installed_packages:
                 self._installed_packages = []
     
-    def _install_single_package(self, from_code: str, to_code: str) -> bool:
+    def _check_package_installed(self, from_code: str, to_code: str) -> bool:
         """
-        Install a single translation package for a specific language pair.
+        Check if a translation package is installed locally (offline only).
         
-        This method is called when a translation is requested for a pair that
-        doesn't have an installed package yet. It attempts to download and
-        install the package on-demand. Works offline if package is already installed.
+        This method checks if a package is already installed on the local system.
+        It does NOT attempt to download packages from the internet.
         
         Args:
             from_code: Source language code (e.g., "en", "hi", "ko")
             to_code: Target language code (e.g., "en", "hi", "ko")
             
         Returns:
-            True if package was successfully installed or already exists, False otherwise
-            
-        Raises:
-            Exception: If package installation fails
+            True if package is installed, False otherwise
         """
         try:
             # Check if package is already installed from disk (works offline)
@@ -278,48 +269,24 @@ class TranslationService:
                 if (from_code, to_code) not in self._installed_packages:
                     self._installed_packages.append((from_code, to_code))
                     self._save_packages_manifest()
-                packages_storage_path = os.path.expanduser("~/.local/share/argos-translate/packages")
+                packages_storage_path = self._get_packages_storage_path()
                 package_dir = os.path.join(packages_storage_path, f"{from_code}_{to_code}")
                 logger.info(
-                    f"Translation package already installed: {from_code} -> {to_code} "
+                    f"Translation package found: {from_code} -> {to_code} "
                     f"(location: {package_dir})"
                 )
                 return True
             
-            # Try to update package index and download (requires internet)
-            try:
-                logger.info("Attempting to download package (requires internet)...")
-                argostranslate.package.update_package_index()
-                available_packages = argostranslate.package.get_available_packages()
-            except Exception as e:
-                logger.error(f"Cannot download package - internet unavailable: {str(e)}")
-                raise ValueError(f"Package {from_code} -> {to_code} not installed and internet unavailable")
-            
-            # Find the package in available packages
-            package_to_install = next(
-                (pkg for pkg in available_packages 
-                 if pkg.from_code == from_code and pkg.to_code == to_code),
-                None
+            # Package not installed - return False (do NOT try to download)
+            logger.warning(
+                f"Translation package not installed: {from_code} -> {to_code}. "
+                f"This server runs in offline mode. Install packages manually if needed."
             )
-            
-            if package_to_install:
-                logger.info(f"Installing translation package: {from_code} -> {to_code}...")
-                # Download the package file to local cache
-                package_path = package_to_install.download()
-                # Install the downloaded package
-                argostranslate.package.install_from_path(package_path)
-                # Update internal tracking and save manifest
-                self._installed_packages.append((from_code, to_code))
-                self._save_packages_manifest()
-                logger.info(f"Successfully installed translation package: {from_code} -> {to_code}")
-                return True
-            else:
-                logger.warning(f"Translation package not available: {from_code} -> {to_code}")
-                return False
+            return False
                 
         except Exception as e:
-            logger.error(f"Failed to install package {from_code}->{to_code}: {str(e)}", exc_info=True)
-            raise
+            logger.error(f"Failed to check package {from_code}->{to_code}: {str(e)}", exc_info=True)
+            return False
     
     def detect_language(self, text: str) -> Tuple[str, float]:
         """
@@ -429,30 +396,28 @@ class TranslationService:
                 f"Supported pairs: {self.SUPPORTED_PAIRS}"
             )
         
-        # Step 5: Ensure translation packages are installed
-        # Try to install packages if not already installed
+        # Step 5: Ensure translation packages are initialized
+        # Reload packages from disk if not already initialized
         if not self._installed_packages:
-            logger.info("No translation packages found. Attempting to install required packages...")
+            logger.info("No translation packages found. Checking disk for installed packages...")
             try:
                 self._initialize_translation_packages()
             except Exception as e:
-                logger.error(f"Failed to install translation packages: {str(e)}")
+                logger.error(f"Failed to load translation packages: {str(e)}")
                 raise ValueError(
-                    f"Translation packages are not installed and installation failed: {str(e)}. "
-                    "Please check server logs for details."
+                    f"Translation packages are not installed. "
+                    f"This server runs in offline mode. Please install packages manually. "
+                    f"Error: {str(e)}"
                 )
         
-        # Step 6: Verify the specific pair is installed, try to install if not
+        # Step 6: Verify the specific pair is installed (offline mode - no download attempts)
         if (source_language, target_language) not in self._installed_packages:
-            logger.info(f"Translation package for {source_language} -> {target_language} not found. Attempting to install...")
-            try:
-                self._install_single_package(source_language, target_language)
-            except Exception as e:
-                logger.error(f"Failed to install package {source_language} -> {target_language}: {str(e)}")
+            logger.info(f"Translation package for {source_language} -> {target_language} not in cache. Checking disk...")
+            if not self._check_package_installed(source_language, target_language):
                 raise ValueError(
                     f"Translation package for {source_language} -> {target_language} is not installed. "
                     f"Installed packages: {self._installed_packages}. "
-                    f"Installation error: {str(e)}"
+                    f"This server runs in offline mode. Install packages manually on a machine with internet access."
                 )
         
         try:

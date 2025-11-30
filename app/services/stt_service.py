@@ -46,7 +46,7 @@ class ModelPool:
     Author: Debarun Lahiri
     """
     
-    def __init__(self, pool_size: int, model_size: str, device: str, compute_type: str, model_cache_dir: str):
+    def __init__(self, pool_size: int, model_size: str, device: str, compute_type: str, model_cache_dir: str, model_local_path: Optional[str] = None):
         """
         Initialize the ModelPool.
         
@@ -56,12 +56,14 @@ class ModelPool:
             device: Device to run models on ("cpu" or "cuda")
             compute_type: Compute type (int8 for CPU, int8_float16/float16/float32 for GPU)
             model_cache_dir: Directory to cache downloaded models
+            model_local_path: Optional path to local model directory (for offline use without HuggingFace)
         """
         self.pool_size = pool_size
         self.model_size = model_size
         self.device = device
         self.compute_type = compute_type
         self.model_cache_dir = model_cache_dir
+        self.model_local_path = model_local_path
         self.models: List[WhisperModel] = []  # List of loaded model instances
         self.current_index = 0  # Current index for round-robin selection
         self.index_lock = threading.Lock()  # Lock for thread-safe index access
@@ -115,17 +117,55 @@ class ModelPool:
         
         logger.info(f"Using {optimal_threads} CPU threads per model instance (total CPU cores: {cpu_count})")
         
-        # Step 4: Load all model instances into the pool
+        # Step 4: Determine model path - use local path if available, otherwise use model size
+        model_path_or_size = self.model_size
+        if self.model_local_path:
+            # Check if local model path exists
+            if os.path.isdir(self.model_local_path):
+                model_path_or_size = self.model_local_path
+                logger.info(f"Using local model from: {self.model_local_path}")
+                
+                # Verify required model files exist
+                required_files = ["model.bin", "config.json", "tokenizer.json", "vocabulary.json"]
+                missing_files = []
+                for f in required_files:
+                    if not os.path.exists(os.path.join(self.model_local_path, f)):
+                        missing_files.append(f)
+                
+                if missing_files:
+                    logger.warning(
+                        f"Some model files may be missing in {self.model_local_path}: {missing_files}. "
+                        f"Model loading may fail."
+                    )
+            else:
+                logger.error(
+                    f"Local model path not found: {self.model_local_path}. "
+                    f"Please ensure the model files are present in this directory. "
+                    f"Required files: model.bin, config.json, tokenizer.json, vocabulary.json"
+                )
+                raise RuntimeError(
+                    f"Local model path not found: {self.model_local_path}. "
+                    f"Download the model files and place them in this directory."
+                )
+        else:
+            logger.info(f"No local model path specified. Using model size: {self.model_size}")
+            logger.warning(
+                "This will attempt to download from HuggingFace. "
+                "If you have no internet access, set model_local_path in config."
+            )
+        
+        # Step 5: Load all model instances into the pool
         for i in range(self.pool_size):
             try:
                 logger.info(f"Loading model instance {i+1}/{self.pool_size}...")
                 model = WhisperModel(
-                    self.model_size,
+                    model_path_or_size,
                     device=device,
                     compute_type=self.compute_type,
                     download_root=self.model_cache_dir,
                     cpu_threads=optimal_threads,
-                    num_workers=1
+                    num_workers=1,
+                    local_files_only=True if self.model_local_path else False
                 )
                 self.models.append(model)
                 logger.info(f"Model instance {i+1}/{self.pool_size} loaded successfully")
@@ -205,6 +245,7 @@ class STTService:
         self.device = settings.device  # Device (cpu/cuda)
         self.compute_type = settings.compute_type  # Compute type for optimization
         self.model_cache_dir = settings.model_cache_dir  # Model cache directory
+        self.model_local_path = settings.model_local_path  # Local model path for offline use
         self.pool_size = settings.model_pool_size  # Number of model instances
         self._is_loaded = False  # Track if models are loaded
         
@@ -230,8 +271,9 @@ class STTService:
             return
             
         try:
+            model_info = self.model_local_path if self.model_local_path else self.model_size
             logger.info(
-                f"Initializing model pool: {self.model_size} "
+                f"Initializing model pool: {model_info} "
                 f"(device: {self.device}, compute_type: {self.compute_type}, pool_size: {self.pool_size})"
             )
             
@@ -241,7 +283,8 @@ class STTService:
                 model_size=self.model_size,
                 device=self.device,
                 compute_type=self.compute_type,
-                model_cache_dir=self.model_cache_dir
+                model_cache_dir=self.model_cache_dir,
+                model_local_path=self.model_local_path
             )
             self.model_pool.initialize()
             self._is_loaded = True

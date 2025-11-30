@@ -1,10 +1,14 @@
 # Translation Packages Storage Location
 
+## Offline Mode
+
+The translation service runs in **fully offline mode** - it does NOT download packages from the internet. All translation packages must be pre-installed on the system before running the server.
+
 ## Package Storage Directory
 
-Argos Translate stores all installed translation packages in the following locations:
+Argos Translate stores all installed translation packages in platform-specific locations:
 
-### macOS/Linux
+### macOS
 ```
 ~/.local/share/argos-translate/packages
 ```
@@ -14,10 +18,27 @@ Argos Translate stores all installed translation packages in the following locat
 /Users/debarunlahiri/.local/share/argos-translate/packages
 ```
 
+### Linux
+```
+~/.local/share/argos-translate/packages
+```
+
+**Full path example:**
+```
+/home/username/.local/share/argos-translate/packages
+```
+
 ### Windows
 ```
 C:\Users\username\.local\share\argos-translate\packages
 ```
+
+**Full path example:**
+```
+C:\Users\john\.local\share\argos-translate\packages
+```
+
+**Note:** The application automatically detects the correct path based on your operating system.
 
 ## Package Directory Structure
 
@@ -50,21 +71,92 @@ python -c "import argostranslate.package; packages = argostranslate.package.get_
 ```
 
 ### Using File System
-```bash
-# macOS/Linux
-ls -la ~/.local/share/argos-translate/packages/
 
-# Windows
+**macOS:**
+```bash
+ls -la ~/.local/share/argos-translate/packages/
+# Or full path:
+ls -la /Users/$(whoami)/.local/share/argos-translate/packages/
+```
+
+**Linux:**
+```bash
+ls -la ~/.local/share/argos-translate/packages/
+# Or full path:
+ls -la /home/$(whoami)/.local/share/argos-translate/packages/
+```
+
+**Windows (Command Prompt):**
+```cmd
 dir %USERPROFILE%\.local\share\argos-translate\packages
+```
+
+**Windows (PowerShell):**
+```powershell
+Get-ChildItem "$env:USERPROFILE\.local\share\argos-translate\packages"
 ```
 
 ## Important Notes
 
-1. **Offline Operation**: Once packages are installed, they are stored locally and work completely offline
-2. **Persistence**: Packages persist across server restarts and Python environment changes
-3. **Shared Location**: Packages are stored in the user's home directory, not in the project directory
-4. **Backup**: To backup packages, copy the entire `~/.local/share/argos-translate/packages/` directory
-5. **Size**: Each package is typically 50-200 MB in size
+1. **Fully Offline Mode**: The application runs in fully offline mode - it does NOT download packages from the internet
+2. **Pre-installation Required**: Translation packages must be installed before running the server
+3. **Persistence**: Packages persist across server restarts and Python environment changes
+4. **Shared Location**: Packages are stored in the user's home directory, not in the project directory
+5. **Platform Independent**: Works on macOS, Linux, and Windows - paths are automatically detected
+6. **Backup**: To backup packages, copy the entire packages directory for your platform
+7. **Size**: Each package is typically 50-200 MB in size
+
+## Installing Translation Packages (One-Time Setup)
+
+### On a Machine with Internet Access
+
+Before deploying to an offline server, install packages on a machine with internet:
+
+```bash
+# Activate your virtual environment
+source venv/bin/activate  # macOS/Linux
+# OR
+venv\Scripts\activate  # Windows
+
+# Install packages using Python
+python -c "
+import argostranslate.package
+argostranslate.package.update_package_index()
+available_packages = argostranslate.package.get_available_packages()
+packages_to_install = ['en_hi', 'hi_en', 'en_ko', 'ko_en', 'hi_ko', 'ko_hi']
+for pkg_code in packages_to_install:
+    for pkg in available_packages:
+        if f'{pkg.from_code}_{pkg.to_code}' == pkg_code:
+            print(f'Installing {pkg_code}...')
+            package_path = pkg.download()
+            argostranslate.package.install_from_path(package_path)
+            print(f'Installed {pkg_code}')
+            break
+"
+```
+
+### Transferring Packages to Offline Server
+
+After installation, copy the packages directory to your offline server:
+
+**macOS/Linux:**
+```bash
+# On machine with internet (after installing packages)
+tar -czf translation-packages.tar.gz ~/.local/share/argos-translate/packages/
+
+# Transfer to offline server and extract:
+tar -xzf translation-packages.tar.gz -C ~/.local/share/argos-translate/
+```
+
+**Windows:**
+```powershell
+# On machine with internet (after installing packages)
+# Use 7-Zip or similar to compress:
+# C:\Users\username\.local\share\argos-translate\packages
+
+# Transfer to offline server and extract to:
+# C:\Users\username\.local\share\argos-translate\packages
+```
 
 ## Package Contents
 
@@ -86,18 +178,33 @@ INFO: Translation package already installed: en -> hi (location: /Users/debarunl
 ## Backup and Restore
 
 ### Backup Packages
-```bash
-# macOS/Linux
-tar -czf translation-packages-backup.tar.gz ~/.local/share/argos-translate/packages/
 
-# Windows
-# Use 7-Zip or similar to compress the packages directory
+**macOS/Linux:**
+```bash
+tar -czf translation-packages-backup.tar.gz ~/.local/share/argos-translate/packages/
+```
+
+**Windows (PowerShell):**
+```powershell
+Compress-Archive -Path "$env:USERPROFILE\.local\share\argos-translate\packages" -DestinationPath "translation-packages-backup.zip"
+```
+
+**Windows (7-Zip):**
+```cmd
+"C:\Program Files\7-Zip\7z.exe" a translation-packages-backup.7z "%USERPROFILE%\.local\share\argos-translate\packages"
 ```
 
 ### Restore Packages
+
+**macOS/Linux:**
 ```bash
 # Extract to the packages directory
 tar -xzf translation-packages-backup.tar.gz -C ~/.local/share/argos-translate/
+```
+
+**Windows (PowerShell):**
+```powershell
+Expand-Archive -Path "translation-packages-backup.zip" -DestinationPath "$env:USERPROFILE\.local\share\argos-translate\"
 ```
 
 ## Troubleshooting

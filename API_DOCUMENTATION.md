@@ -277,6 +277,9 @@ Transcribe audio file to text with optional word-level timestamps and language d
     - `confidence` (float, optional): Word confidence score (0.0-1.0)
   - `speaker` (string, nullable): Speaker identifier (if diarization enabled)
   - `language` (string, optional): Language code for this segment
+- `english_text` (string): Translation of transcribed text in English
+- `hindi_text` (string): Translation of transcribed text in Hindi
+- `korean_text` (string): Translation of transcribed text in Korean
 - `processing_time_sec` (float): Time taken to process the audio in seconds
 - `real_time_factor` (float): Processing speed ratio (RTF < 1.0 means faster than real-time)
 - `audio_duration_sec` (float): Duration of the audio file in seconds
@@ -333,6 +336,9 @@ with open("sample.wav", "rb") as audio_file:
     if response.status_code == 200:
         result = response.json()
         print(f"Transcribed text: {result['text']}")
+        print(f"English: {result['english_text']}")
+        print(f"Hindi: {result['hindi_text']}")
+        print(f"Korean: {result['korean_text']}")
         print(f"Detected language: {result['detected_language']}")
         print(f"Processing time: {result['processing_time_sec']:.2f}s")
         print(f"Real-time factor: {result['real_time_factor']:.2f}")
@@ -388,7 +394,7 @@ Content-Type: application/json
 Content-Length: 1234
 ```
 
-**Response Body (With Word Timestamps):**
+**Response Body (With Word Timestamps and Translations):**
 ```json
 {
   "text": "नमस्ते, hello, 안녕하세요",
@@ -441,6 +447,9 @@ Content-Length: 1234
       "language": "ko"
     }
   ],
+  "english_text": "Hello, hello, hello",
+  "hindi_text": "नमस्ते, नमस्ते, नमस्ते",
+  "korean_text": "안녕하세요, 안녕하세요, 안녕하세요",
   "processing_time_sec": 3.4,
   "real_time_factor": 0.42,
   "audio_duration_sec": 8.1,
@@ -465,6 +474,9 @@ Content-Length: 1234
       "language": "en"
     }
   ],
+  "english_text": "Hello, how are you today?",
+  "hindi_text": "नमस्ते, आप आज कैसे हैं?",
+  "korean_text": "안녕하세요, 오늘 어떻게 지내세요?",
   "processing_time_sec": 2.1,
   "real_time_factor": 0.60,
   "audio_duration_sec": 3.5,
@@ -567,7 +579,7 @@ Content-Type: application/json
 
 **POST** `/v1/translate`
 
-Translate text from one language to another. Supports bidirectional translation between English, Hindi, and Korean.
+Translate text to all 3 languages (English, Hindi, Korean). The API always returns translations in all supported languages regardless of the target_language parameter.
 
 **Request:**
 - **Content-Type**: `application/json`
@@ -585,36 +597,36 @@ Translate text from one language to another. Supports bidirectional translation 
 **Request Fields:**
 - `text` (string, required): Text to translate
 - `source_language` (string, optional): Source language code (`en`, `hi`, `ko`) or `auto` for auto-detection. Default: `auto`
-- `target_language` (string, required): Target language code (`en`, `hi`, `ko`). Default: `en`
+- `target_language` (string, optional): Deprecated - translations are always returned in all languages. Default: `en`
 
-**Supported Translation Pairs:**
-- English ↔ Hindi (`en` ↔ `hi`)
-- English ↔ Korean (`en` ↔ `ko`)
-- Hindi ↔ Korean (`hi` ↔ `ko`)
-
-All pairs are bidirectional.
+**Supported Languages:**
+- English (`en`)
+- Hindi (`hi`)
+- Korean (`ko`)
 
 **Response Model:**
 ```json
 {
-  "translated_text": "Translated text",
+  "english_text": "Translated text in English",
+  "hindi_text": "अनुवादित पाठ हिंदी में",
+  "korean_text": "한국어로 번역된 텍스트",
   "source_language": "detected_source_language",
-  "target_language": "target_language",
   "detected_language": "detected_source_language",
   "detection_confidence": 0.99,
-  "processing_time_sec": 0.15,
+  "processing_time_sec": 0.25,
   "translation_applied": true
 }
 ```
 
 **Response Fields:**
-- `translated_text` (string): Translated text
+- `english_text` (string): Translation in English
+- `hindi_text` (string): Translation in Hindi
+- `korean_text` (string): Translation in Korean
 - `source_language` (string): Source language code (detected or specified)
-- `target_language` (string): Target language code
 - `detected_language` (string): Detected source language code
 - `detection_confidence` (float): Confidence score for language detection (0.0-1.0)
-- `processing_time_sec` (float): Time taken to process the translation in seconds
-- `translation_applied` (boolean): Whether translation was applied (false if source and target are the same)
+- `processing_time_sec` (float): Time taken to process all translations in seconds
+- `translation_applied` (boolean): Whether translation was applied (always true for supported languages)
 
 **Request Headers:**
 ```
@@ -636,51 +648,64 @@ Content-Length: 89
 
 **Request Examples:**
 
-**cURL - Hindi to English:**
+**cURL - Hindi text (returns all 3 languages):**
 ```bash
 curl -X POST "http://localhost:8000/v1/translate" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json" \
   -d '{
     "text": "नमस्ते, आप कैसे हैं?",
-    "source_language": "hi",
-    "target_language": "en"
+    "source_language": "hi"
   }'
 ```
 
-**cURL - Auto-detect and Translate to Hindi:**
+**Response:**
+```json
+{
+  "english_text": "Hello, how are you?",
+  "hindi_text": "नमस्ते, आप कैसे हैं?",
+  "korean_text": "안녕하세요, 어떻게 지내세요?",
+  "source_language": "hi",
+  "detected_language": "hi",
+  "detection_confidence": 0.99,
+  "processing_time_sec": 0.23,
+  "translation_applied": true
+}
+```
+
+**cURL - Auto-detect language (returns all 3 languages):**
 ```bash
 curl -X POST "http://localhost:8000/v1/translate" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json" \
   -d '{
     "text": "Hello, how are you?",
-    "source_language": "auto",
-    "target_language": "hi"
+    "source_language": "auto"
   }'
 ```
 
-**cURL - English to Korean:**
-```bash
-curl -X POST "http://localhost:8000/v1/translate" \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json" \
-  -d '{
-    "text": "Good morning",
-    "source_language": "en",
-    "target_language": "ko"
-  }'
+**Response:**
+```json
+{
+  "english_text": "Hello, how are you?",
+  "hindi_text": "नमस्ते, आप कैसे हैं?",
+  "korean_text": "안녕하세요, 어떻게 지내세요?",
+  "source_language": "en",
+  "detected_language": "en",
+  "detection_confidence": 0.98,
+  "processing_time_sec": 0.25,
+  "translation_applied": true
+}
 ```
 
-**cURL - Korean to Hindi:**
+**cURL - Korean text (returns all 3 languages):**
 ```bash
 curl -X POST "http://localhost:8000/v1/translate" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json" \
   -d '{
     "text": "안녕하세요",
-    "source_language": "ko",
-    "target_language": "hi"
+    "source_language": "ko"
   }'
 ```
 
@@ -690,11 +715,10 @@ import requests
 
 url = "http://localhost:8000/v1/translate"
 
-# Example 1: Hindi to English
+# Example: Hindi text - get translations in all 3 languages
 data = {
     "text": "नमस्ते, आप कैसे हैं?",
-    "source_language": "hi",
-    "target_language": "en"
+    "source_language": "hi"
 }
 
 response = requests.post(url, json=data, headers={"Accept": "application/json"})
@@ -702,13 +726,13 @@ response = requests.post(url, json=data, headers={"Accept": "application/json"})
 if response.status_code == 200:
     result = response.json()
     print(f"Original: {data['text']}")
-    print(f"Translated: {result['translated_text']}")
+    print(f"English: {result['english_text']}")
+    print(f"Hindi: {result['hindi_text']}")
+    print(f"Korean: {result['korean_text']}")
     print(f"Source language: {result['source_language']}")
-    print(f"Target language: {result['target_language']}")
     print(f"Detected language: {result['detected_language']}")
     print(f"Detection confidence: {result['detection_confidence']:.2%}")
     print(f"Processing time: {result['processing_time_sec']:.3f}s")
-    print(f"Translation applied: {result['translation_applied']}")
 else:
     print(f"Error: {response.status_code}")
     print(response.json())

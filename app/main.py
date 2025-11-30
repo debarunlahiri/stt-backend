@@ -221,13 +221,16 @@ async def transcribe_audio(
     enable_diarization: Optional[bool] = None
 ):
     """
-    Transcribe audio file to text.
+    Transcribe audio file to text and automatically translate to all 3 languages.
     
     Supports all major audio formats including:
     - Common formats: WAV, MP3, M4A, AAC, FLAC, OGG, OPUS, WEBM
     - Additional formats: AIFF, AMR, WMA, MP2, MP4, 3GP, GS by ffmpeg
     
     All formats supported by ffmpeg are automatically detected and processed.
+    
+    The transcribed text is automatically translated to English, Hindi, and Korean,
+    and all translations are included in the response.
     
     **Limitations:**
     - Maximum audio duration: 1 minute (60 seconds). Audio files longer than 1 minute will be rejected.
@@ -373,12 +376,50 @@ async def transcribe_audio(
             if confidences:
                 confidence = sum(confidences) / len(confidences)
         
+        # Automatically translate transcribed text to all 3 languages
+        en_text = full_text
+        hi_text = full_text
+        ko_text = full_text
+        
+        if translation_service is not None and full_text.strip():
+            try:
+                # Helper function to translate to a specific language
+                async def translate_to_language(target_lang: str) -> str:
+                    """Helper function to translate transcribed text to a specific language."""
+                    if detected_language == target_lang:
+                        return full_text
+                    else:
+                        translated_text, _, _ = await asyncio.get_event_loop().run_in_executor(
+                            executor,
+                            lambda: translation_service.translate(
+                                text=full_text,
+                                source_language=detected_language,
+                                target_language=target_lang
+                            )
+                        )
+                        return translated_text
+                
+                # Translate to all 3 languages in parallel
+                en_text, hi_text, ko_text = await asyncio.gather(
+                    translate_to_language("en"),
+                    translate_to_language("hi"),
+                    translate_to_language("ko")
+                )
+                logger.info(f"Transcribed text automatically translated to all 3 languages")
+            except Exception as e:
+                logger.warning(f"Failed to translate transcribed text: {str(e)}. Using original text for all languages.")
+                # Continue with original text if translation fails
+                en_text = hi_text = ko_text = full_text
+        
         # Build response
         response = TranscriptionResponse(
             text=full_text,
             language=detected_language,
             detected_language=detected_language,
             segments=segments,
+            english_text=en_text,
+            hindi_text=hi_text,
+            korean_text=ko_text,
             processing_time_sec=metadata["processing_time_sec"],
             real_time_factor=metadata["real_time_factor"],
             audio_duration_sec=metadata["audio_duration_sec"],
@@ -412,18 +453,19 @@ async def transcribe_audio(
 @app.post("/v1/translate", response_model=TranslationResponse, tags=["Translation"])
 async def translate_text(request: TranslationRequest):
     """
-    Translate text from one language to another.
+    Translate text to all 3 languages (English, Hindi, Korean).
     
-    Supports translation between:
-    - English (en) ↔ Hindi (hi)
-    - English (en) ↔ Korean (ko)
-    - Hindi (hi) ↔ Korean (ko)
+    Returns translations in all supported languages:
+    - English (en)
+    - Hindi (hi)
+    - Korean (ko)
     
     - **text**: Text to translate
     - **source_language**: Source language code (en, hi, ko) or 'auto' for auto-detection (default: auto)
-    - **target_language**: Target language code (en, hi, ko) (default: en)
+    - **target_language**: (Deprecated - translations are always returned in all languages)
     
     If source_language is 'auto' or not provided, the language will be automatically detected.
+    The response will contain translations in all 3 languages regardless of the target_language parameter.
     """
     if translation_service is None:
         raise HTTPException(
@@ -433,32 +475,60 @@ async def translate_text(request: TranslationRequest):
     
     try:
         source_lang = request.source_language.value if request.source_language else None
-        target_lang = request.target_language.value
         
-        # Run translation in thread pool to allow concurrent requests
+        # Run translations in thread pool to allow concurrent requests
         if executor is None:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Thread pool executor not initialized"
             )
         
-        translated_text, detected_source_lang, metadata = await asyncio.get_event_loop().run_in_executor(
-            executor,
-            lambda: translation_service.translate(
-                text=request.text,
-                source_language=source_lang,
-                target_language=target_lang
+        # Detect source language first if needed
+        if source_lang is None or source_lang == "auto":
+            detected_lang, confidence = await asyncio.get_event_loop().run_in_executor(
+                executor,
+                lambda: translation_service.detect_language(request.text)
             )
+            source_lang = detected_lang
+        else:
+            confidence = 1.0
+        
+        # Translate to all 3 languages in parallel for better performance
+        start_time = time.time()
+        
+        async def translate_to_language(target_lang: str) -> str:
+            """Helper function to translate to a specific language."""
+            if source_lang == target_lang:
+                return request.text
+            else:
+                translated_text, _, _ = await asyncio.get_event_loop().run_in_executor(
+                    executor,
+                    lambda: translation_service.translate(
+                        text=request.text,
+                        source_language=source_lang,
+                        target_language=target_lang
+                    )
+                )
+                return translated_text
+        
+        # Translate to all 3 languages in parallel
+        en_text, hi_text, ko_text = await asyncio.gather(
+            translate_to_language("en"),
+            translate_to_language("hi"),
+            translate_to_language("ko")
         )
         
+        total_processing_time = time.time() - start_time
+        
         response = TranslationResponse(
-            translated_text=translated_text,
-            source_language=detected_source_lang,
-            target_language=target_lang,
-            detected_language=detected_source_lang,
-            detection_confidence=metadata.get("detection_confidence", 0.0),
-            processing_time_sec=metadata.get("processing_time_sec", 0.0),
-            translation_applied=metadata.get("translation_applied", True)
+            english_text=en_text,
+            hindi_text=hi_text,
+            korean_text=ko_text,
+            source_language=source_lang,
+            detected_language=source_lang,
+            detection_confidence=confidence,
+            processing_time_sec=total_processing_time,
+            translation_applied=source_lang in ["en", "hi", "ko"]
         )
         
         return response
