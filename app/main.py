@@ -16,8 +16,12 @@ multiple audio formats through comprehensive audio processing.
 Author: Debarun Lahiri
 """
 
-import logging
 import os
+# CRITICAL: Set environment variables BEFORE any imports
+# This prevents spacy (dependency of argostranslate) from trying to download models
+os.environ.setdefault('SPACY_DISABLE_MODEL_DOWNLOAD', '1')
+
+import logging
 import time
 import asyncio
 import uuid

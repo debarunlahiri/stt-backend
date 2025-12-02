@@ -827,13 +827,30 @@ The translation API supports bidirectional translation between:
 
 Translation is fully offline and uses Argos Translate for high-quality translations. Source language can be auto-detected if not specified.
 
+**IMPORTANT: Translation Packages Must Be Installed Offline**
+
+The application runs in **fully offline mode** - translation packages must be downloaded and installed before running the server. These packages cannot be downloaded automatically as the system has no internet access.
+
+**Quick Start - Download Translation Models:**
+
+1. **Download packages on a machine with internet** - See `DOWNLOAD_TRANSLATION_MODELS.md` for:
+   - Direct download links to all 6 translation packages
+   - Python script to download packages automatically
+   - Step-by-step installation instructions
+
+2. **Transfer packages to your offline server** - Copy the downloaded `.argosmodel` files
+
+3. **Install packages** - Run the installation script provided in the guide
+
 **Translation Packages Storage:**
 
-Translation models are stored in platform-specific locations:
+After installation, packages are stored in platform-specific locations:
 - **macOS/Linux**: `~/.local/share/argos-translate/packages`
 - **Windows**: `C:\Users\username\.local\share\argos-translate\packages`
 
-The application runs in **fully offline mode** - translation packages must be pre-installed before running the server. See `TRANSLATION_PACKAGES_LOCATION.md` for detailed installation instructions and platform-specific paths.
+For detailed instructions, see:
+- `DOWNLOAD_TRANSLATION_MODELS.md` - How to download and install packages
+- `TRANSLATION_PACKAGES_LOCATION.md` - Package storage locations and management
 
 ## License
 

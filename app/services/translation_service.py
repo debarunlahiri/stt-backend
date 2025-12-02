@@ -10,15 +10,39 @@ provides thread-safe translation operations.
 Author: Debarun Lahiri
 """
 
+import os
+import warnings
+
+# CRITICAL: Set environment variable BEFORE any imports that might use spacy
+# This prevents spacy from trying to download models (requires internet)
+os.environ.setdefault('SPACY_DISABLE_MODEL_DOWNLOAD', '1')
+
+# Suppress spacy warnings - it's a dependency of argostranslate but we don't need its models
+warnings.filterwarnings('ignore', category=UserWarning, module='spacy')
+warnings.filterwarnings('ignore', category=UserWarning, module='en_core_web')
+warnings.filterwarnings('ignore', message='.*spacy.*')
+
 import logging
 import time
 import json
-import os
 from pathlib import Path
 from typing import Optional, Dict, Tuple
+
 from langdetect import detect, detect_langs, LangDetectException
-import argostranslate.package
-import argostranslate.translate
+
+# Import argostranslate after suppressing warnings
+# Wrap in try-except to handle any spacy initialization errors gracefully
+try:
+    import argostranslate.package
+    import argostranslate.translate
+except Exception as e:
+    # If there's an import error, log it but continue - may still work
+    import logging as log_module
+    log_module.basicConfig(level=log_module.WARNING)
+    log_module.warning(f"Argos Translate import warning (may be spacy-related): {str(e)}")
+    # Try to import anyway
+    import argostranslate.package
+    import argostranslate.translate
 
 from app.config import settings
 
@@ -70,33 +94,39 @@ class TranslationService:
     
     def __init__(self):
         """
-        Initialize the TranslationService.
+        Initialize the TranslationService in fully offline mode.
         
-        Attempts to initialize and install translation packages during startup.
-        If initialization fails, packages will be installed on first use.
-        This allows the service to start even if network is unavailable during startup.
+        This service works completely offline - it does NOT connect to the internet.
+        Translation packages must be pre-installed on the system before running.
         
-        Installed packages are loaded from disk first (offline mode), then updated
-        from the package index if internet is available.
+        Packages are loaded from local disk storage:
+        - macOS/Linux: ~/.local/share/argos-translate/packages
+        - Windows: C:\\Users\\username\\.local\\share\\argos-translate\\packages
+        
+        If packages are not found, the service will still start but translation
+        will fail when requested. See DOWNLOAD_TRANSLATION_MODELS.md for
+        instructions on downloading and installing packages offline.
         """
         self._installed_packages = []  # List of (from_code, to_code) tuples for installed packages
         self._initialization_attempted = False  # Track if initialization has been attempted
         self._packages_manifest_file = Path("./translation_packages.json")  # File to save installed packages list
         
-        # Step 1: Load installed packages from disk (works offline)
-        # This ensures we can use already-installed packages even without internet
+        # Step 1: Load installed packages from disk (fully offline)
+        # This reads from local storage only - no internet required
         self._load_installed_packages_from_disk()
         
-        # Step 2: Try to initialize/update packages (requires internet)
-        # This will update the package list if internet is available
+        # Step 2: Initialize packages from local disk only (fully offline)
+        # This does NOT attempt to connect to the internet
         try:
             self._initialize_translation_packages()
         except Exception as e:
-            logger.warning(f"Failed to initialize translation packages during startup: {str(e)}")
-            logger.info("Translation packages will be installed on first use if internet is available")
-            # If we have packages from disk, we can still work offline
+            logger.warning(f"Failed to initialize translation packages from disk: {str(e)}")
+            logger.info("Translation packages must be pre-installed. See DOWNLOAD_TRANSLATION_MODELS.md for instructions.")
+            # Service will still start but translation may fail if packages missing
             if self._installed_packages:
-                logger.info(f"Using {len(self._installed_packages)} pre-installed packages from disk")
+                logger.info(f"Found {len(self._installed_packages)} pre-installed packages from disk")
+            else:
+                logger.warning("No translation packages found. Translation features will not work until packages are installed.")
         finally:
             self._initialization_attempted = True
     
