@@ -20,9 +20,25 @@ Author: Debarun Lahiri
 """
 
 import os
+import warnings
+import ssl
+
 # CRITICAL: Set environment variables BEFORE any imports
-# This prevents spacy (dependency of argostranslate) from trying to download models
+# Prevent spacy and stanza (dependencies of argostranslate) from trying to download models
 os.environ.setdefault('SPACY_DISABLE_MODEL_DOWNLOAD', '1')
+# Stanza default location is ~/stanza_resources - use it if it exists, otherwise prevent downloads
+stanza_default = os.path.expanduser('~/stanza_resources')
+if os.path.exists(stanza_default):
+    os.environ.setdefault('STANZA_RESOURCES_DIR', stanza_default)
+else:
+    os.environ.setdefault('STANZA_RESOURCES_DIR', os.path.expanduser('~/.stanza'))
+os.environ.setdefault('STANZA_CACHE_DIR', os.path.expanduser('~/.stanza_cache'))
+
+# Disable SSL verification warnings for office proxy/certificate issues
+warnings.filterwarnings('ignore', message='.*SSL.*')
+warnings.filterwarnings('ignore', message='.*certificate.*')
+warnings.filterwarnings('ignore', message='.*443.*')
+warnings.filterwarnings('ignore', category=ssl.SSLError)
 
 import sys
 import uvicorn

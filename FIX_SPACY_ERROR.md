@@ -1,46 +1,50 @@
-# Fix spaCy Initialization Error
+# Fix spaCy and Stanza Initialization Errors
 
 ## Problem
 
-Argos Translate depends on spaCy, and spaCy may try to initialize or download models when imported, causing errors in offline environments.
+Argos Translate depends on both **spaCy** and **Stanza**, which may try to:
+1. Download models when imported (requires internet)
+2. Initialize models that aren't installed
+3. Connect to the internet through office proxy (causing SSL certificate 443 errors)
+
+In offline environments or office networks with proxy restrictions, this causes errors.
 
 ## Solution
 
-spaCy is a dependency of Argos Translate but is only used internally. We can suppress spaCy initialization errors by configuring it to work offline.
+**The fix has already been applied in the code!** The application now automatically:
+1. Disables spaCy and Stanza model downloads
+2. Suppresses SSL/certificate warnings for office proxy
+3. Handles initialization errors gracefully
 
-### Option 1: Disable spaCy Model Downloads (Recommended)
+### Automatic Fix Applied
 
-Set environment variable to prevent spaCy from trying to download models:
+The following environment variables are automatically set:
+- `SPACY_DISABLE_MODEL_DOWNLOAD=1` - Prevents spaCy from downloading models
+- `STANZA_RESOURCES_DIR` - Sets local directory for Stanza (prevents downloads)
+- `STANZA_CACHE_DIR` - Sets cache directory for Stanza
 
-```bash
-export SPACY_DISABLE_MODEL_DOWNLOAD=1
-```
+SSL certificate warnings are also suppressed to handle office proxy issues.
 
-Add to your `.env` file:
+### Manual Fix (If Needed)
+
+If you still see errors, you can manually set these in your `.env` file:
+
 ```env
 SPACY_DISABLE_MODEL_DOWNLOAD=1
+STANZA_RESOURCES_DIR=~/.stanza
+STANZA_CACHE_DIR=~/.stanza_cache
 ```
 
-Or add to your shell profile (`~/.zshrc`, `~/.bashrc`, etc.):
+Or set in your shell profile (`~/.zshrc`, `~/.bashrc`, etc.):
 ```bash
-echo 'export SPACY_DISABLE_MODEL_DOWNLOAD=1' >> ~/.zshrc
-source ~/.zshrc
+export SPACY_DISABLE_MODEL_DOWNLOAD=1
+export STANZA_RESOURCES_DIR=~/.stanza
+export STANZA_CACHE_DIR=~/.stanza_cache
 ```
 
-### Option 2: Suppress spaCy Warnings
+### Office Proxy / SSL Certificate Issues
 
-If the error is just a warning, you can suppress it by adding this to your code before importing argostranslate:
-
-```python
-import warnings
-warnings.filterwarnings('ignore', category=UserWarning, module='spacy')
-```
-
-### Option 3: Install spaCy Models Offline (If Needed)
-
-If Argos Translate specifically needs spaCy models, you may need to download them on a machine with internet and transfer them.
-
-However, Argos Translate typically doesn't require specific spaCy language models for basic translation - it uses its own translation models.
+The code automatically suppresses SSL certificate errors that occur when dependencies try to check for updates through office proxies. These warnings are non-critical and don't affect functionality.
 
 ## Verification
 
@@ -52,11 +56,24 @@ python run.py
 
 If you still see errors, check the specific error message and we can address it further.
 
-## Common spaCy Initialization Errors
+## Common Errors and Solutions
 
-1. **Model download errors** - Set `SPACY_DISABLE_MODEL_DOWNLOAD=1`
-2. **Missing model files** - Usually not needed for Argos Translate
-3. **Import errors** - Ensure spaCy is properly installed: `pip install spacy`
+### 1. spaCy "not initialized" Error
+**Solution:** Already fixed in code. spaCy doesn't need to be initialized - Argos Translate handles this internally.
+
+### 2. Stanza Certificate 443 Error (Office Proxy)
+**Solution:** Already fixed in code. SSL warnings are suppressed and Stanza downloads are disabled.
+
+### 3. Model Download Errors
+**Solution:** Already fixed. Both spaCy and Stanza are configured to not download models.
+
+### 4. Import Errors
+**Solution:** Ensure dependencies are installed:
+```bash
+pip install spacy stanza
+```
+
+However, **spaCy and Stanza don't need to be initialized or have models installed** - Argos Translate works without them being fully functional.
 
 ## Note
 

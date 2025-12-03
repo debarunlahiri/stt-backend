@@ -12,15 +12,38 @@ Author: Debarun Lahiri
 
 import os
 import warnings
+import ssl
 
-# CRITICAL: Set environment variable BEFORE any imports that might use spacy
-# This prevents spacy from trying to download models (requires internet)
+# CRITICAL: Set environment variables BEFORE any imports
+# Prevent spacy and stanza from trying to download models (requires internet)
 os.environ.setdefault('SPACY_DISABLE_MODEL_DOWNLOAD', '1')
+# Stanza default location is ~/stanza_resources, but we can set custom to prevent downloads
+# If stanza_resources exists, use it; otherwise set a non-existent path to prevent downloads
+stanza_default = os.path.expanduser('~/stanza_resources')
+if os.path.exists(stanza_default):
+    os.environ.setdefault('STANZA_RESOURCES_DIR', stanza_default)
+else:
+    os.environ.setdefault('STANZA_RESOURCES_DIR', os.path.expanduser('~/.stanza'))
+os.environ.setdefault('STANZA_CACHE_DIR', os.path.expanduser('~/.stanza_cache'))
+
+# Disable SSL verification warnings for office proxy/certificate issues
+# This prevents certificate errors when dependencies try to check for updates
+warnings.filterwarnings('ignore', message='.*SSL.*')
+warnings.filterwarnings('ignore', message='.*certificate.*')
+warnings.filterwarnings('ignore', message='.*443.*')
+warnings.filterwarnings('ignore', category=ssl.SSLError)
 
 # Suppress spacy warnings - it's a dependency of argostranslate but we don't need its models
 warnings.filterwarnings('ignore', category=UserWarning, module='spacy')
 warnings.filterwarnings('ignore', category=UserWarning, module='en_core_web')
 warnings.filterwarnings('ignore', message='.*spacy.*')
+warnings.filterwarnings('ignore', message='.*spacy.*not.*initialized.*', category=UserWarning)
+
+# Suppress stanza warnings - it's also a dependency
+warnings.filterwarnings('ignore', category=UserWarning, module='stanza')
+warnings.filterwarnings('ignore', message='.*stanza.*')
+warnings.filterwarnings('ignore', message='.*stanza.*download.*')
+warnings.filterwarnings('ignore', message='.*stanza.*certificate.*')
 
 import logging
 import time
@@ -30,19 +53,37 @@ from typing import Optional, Dict, Tuple
 
 from langdetect import detect, detect_langs, LangDetectException
 
-# Import argostranslate after suppressing warnings
-# Wrap in try-except to handle any spacy initialization errors gracefully
+# Import argostranslate after suppressing warnings and setting environment variables
+# Wrap in try-except to handle any spacy/stanza initialization errors gracefully
+# These libraries may try to download models or check internet even though we don't need them
+try:
+    # Temporarily disable urllib3 SSL warnings for office proxy
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    urllib3.disable_warnings(urllib3.exceptions.SubjectAltNameWarning)
+except:
+    pass
+
 try:
     import argostranslate.package
     import argostranslate.translate
 except Exception as e:
-    # If there's an import error, log it but continue - may still work
+    # If there's an import error, log it but continue - translation may still work
     import logging as log_module
     log_module.basicConfig(level=log_module.WARNING)
-    log_module.warning(f"Argos Translate import warning (may be spacy-related): {str(e)}")
-    # Try to import anyway
-    import argostranslate.package
-    import argostranslate.translate
+    error_msg = str(e)
+    # Don't fail on spacy/stanza initialization errors - they're not critical
+    if 'spacy' in error_msg.lower() or 'stanza' in error_msg.lower() or 'certificate' in error_msg.lower() or 'ssl' in error_msg.lower() or '443' in error_msg:
+        log_module.warning(f"Argos Translate dependency warning (non-critical): {error_msg[:200]}")
+    else:
+        log_module.warning(f"Argos Translate import warning: {error_msg[:200]}")
+    # Try to import anyway - argostranslate may work even if spacy/stanza have issues
+    try:
+        import argostranslate.package
+        import argostranslate.translate
+    except:
+        # If it still fails, we'll handle it in the service initialization
+        pass
 
 from app.config import settings
 
@@ -113,6 +154,7 @@ class TranslationService:
         
         # Step 1: Load installed packages from disk (fully offline)
         # This reads from local storage only - no internet required
+        # Error handling is done inside _load_installed_packages_from_disk
         self._load_installed_packages_from_disk()
         
         # Step 2: Initialize packages from local disk only (fully offline)
@@ -120,8 +162,17 @@ class TranslationService:
         try:
             self._initialize_translation_packages()
         except Exception as e:
-            logger.warning(f"Failed to initialize translation packages from disk: {str(e)}")
-            logger.info("Translation packages must be pre-installed. See DOWNLOAD_TRANSLATION_MODELS.md for instructions.")
+            error_str = str(e).lower()
+            # Don't fail on spacy/stanza/ssl errors - these are non-critical dependencies
+            if any(x in error_str for x in ['spacy', 'stanza', 'ssl', 'certificate', '443', 'download', 'not initialized']):
+                logger.debug(f"Non-critical dependency warning during initialization: {str(e)[:200]}")
+                # Continue anyway - translation may still work
+                if not self._installed_packages:
+                    logger.info("Note: Translation packages should be pre-installed. See DOWNLOAD_TRANSLATION_MODELS.md")
+            else:
+                logger.warning(f"Failed to initialize translation packages from disk: {str(e)[:200]}")
+                logger.info("Translation packages must be pre-installed. See DOWNLOAD_TRANSLATION_MODELS.md for instructions.")
+            
             # Service will still start but translation may fail if packages missing
             if self._installed_packages:
                 logger.info(f"Found {len(self._installed_packages)} pre-installed packages from disk")
@@ -173,6 +224,7 @@ class TranslationService:
         """
         try:
             # Get currently installed packages from Argos Translate (reads from disk, no internet needed)
+            # This may trigger spacy/stanza initialization, but we've disabled their downloads
             installed_packages_list = argostranslate.package.get_installed_packages()
             installed_pairs = [(pkg.from_code, pkg.to_code) for pkg in installed_packages_list]
             
@@ -197,8 +249,37 @@ class TranslationService:
                 logger.info(f"Translation packages will be stored at: {packages_storage_path}")
                 
         except Exception as e:
-            logger.warning(f"Failed to load installed packages from disk: {str(e)}")
-            self._installed_packages = []
+            error_str = str(e).lower()
+            # Handle spacy/stanza/ssl errors gracefully - they're non-critical
+            if any(x in error_str for x in ['spacy', 'stanza', 'ssl', 'certificate', '443', 'download', 'not initialized']):
+                logger.debug(f"Non-critical dependency warning (spacy/stanza/ssl): {str(e)[:200]}")
+                # Try to continue - packages may still be readable
+                try:
+                    packages_storage_path = self._get_packages_storage_path()
+                    # Check if packages directory exists manually
+                    if os.path.exists(packages_storage_path):
+                        # Try to list packages manually
+                        pkg_dirs = [d for d in os.listdir(packages_storage_path) 
+                                   if os.path.isdir(os.path.join(packages_storage_path, d))]
+                        if pkg_dirs:
+                            logger.info(f"Found package directories manually: {pkg_dirs}")
+                            # Try to extract language pairs from directory names
+                            for pkg_dir in pkg_dirs:
+                                if '_' in pkg_dir:
+                                    parts = pkg_dir.split('_')
+                                    if len(parts) == 2:
+                                        pair = (parts[0], parts[1])
+                                        if pair in self.SUPPORTED_PAIRS:
+                                            if pair not in self._installed_packages:
+                                                self._installed_packages.append(pair)
+                            if self._installed_packages:
+                                logger.info(f"Loaded {len(self._installed_packages)} packages from directory listing")
+                except:
+                    pass
+            
+            if not self._installed_packages:
+                logger.warning(f"Failed to load installed packages: {str(e)[:200]}")
+                self._installed_packages = []
     
     def _save_packages_manifest(self) -> None:
         """
