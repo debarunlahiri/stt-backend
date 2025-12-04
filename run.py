@@ -21,7 +21,6 @@ Author: Debarun Lahiri
 
 import os
 import warnings
-import ssl
 
 # CRITICAL: Set environment variables BEFORE any imports
 # Prevent spacy and stanza (dependencies of argostranslate) from trying to download models
@@ -38,7 +37,8 @@ os.environ.setdefault('STANZA_CACHE_DIR', os.path.expanduser('~/.stanza_cache'))
 warnings.filterwarnings('ignore', message='.*SSL.*')
 warnings.filterwarnings('ignore', message='.*certificate.*')
 warnings.filterwarnings('ignore', message='.*443.*')
-warnings.filterwarnings('ignore', category=ssl.SSLError)
+# Note: ssl.SSLError is an Exception, not a Warning, so can't be filtered here
+# SSL errors will be caught in try-except blocks instead
 
 import sys
 import uvicorn

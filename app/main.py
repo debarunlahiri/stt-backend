@@ -18,7 +18,6 @@ Author: Debarun Lahiri
 
 import os
 import warnings
-import ssl
 
 # CRITICAL: Set environment variables BEFORE any imports
 # Prevent spacy and stanza (dependencies of argostranslate) from trying to download models
@@ -35,7 +34,8 @@ os.environ.setdefault('STANZA_CACHE_DIR', os.path.expanduser('~/.stanza_cache'))
 warnings.filterwarnings('ignore', message='.*SSL.*')
 warnings.filterwarnings('ignore', message='.*certificate.*')
 warnings.filterwarnings('ignore', message='.*443.*')
-warnings.filterwarnings('ignore', category=ssl.SSLError)
+# Note: ssl.SSLError is an Exception, not a Warning, so can't be filtered here
+# SSL errors will be caught in try-except blocks instead
 
 import logging
 import time
@@ -397,35 +397,23 @@ async def transcribe_audio(
                 confidence = sum(confidences) / len(confidences)
         
         # Automatically translate transcribed text to all 3 languages
+        # Uses two-step translation: if source is ur/hi/ko, first converts to English, then to all languages
         en_text = full_text
         hi_text = full_text
         ko_text = full_text
         
         if translation_service is not None and full_text.strip():
             try:
-                # Helper function to translate to a specific language
-                async def translate_to_language(target_lang: str) -> str:
-                    """Helper function to translate transcribed text to a specific language."""
-                    if detected_language == target_lang:
-                        return full_text
-                    else:
-                        translated_text, _, _ = await asyncio.get_event_loop().run_in_executor(
-                            executor,
-                            lambda: translation_service.translate(
-                                text=full_text,
-                                source_language=detected_language,
-                                target_language=target_lang
-                            )
-                        )
-                        return translated_text
-                
-                # Translate to all 3 languages in parallel
-                en_text, hi_text, ko_text = await asyncio.gather(
-                    translate_to_language("en"),
-                    translate_to_language("hi"),
-                    translate_to_language("ko")
+                # Use translate_to_all_languages which handles two-step translation automatically
+                # This method translates ur/hi/ko to English first, then English to all 3 languages
+                en_text, hi_text, ko_text, detected_translation_lang, translation_metadata = await asyncio.get_event_loop().run_in_executor(
+                    executor,
+                    lambda: translation_service.translate_to_all_languages(
+                        text=full_text,
+                        source_language=detected_language
+                    )
                 )
-                logger.info(f"Transcribed text automatically translated to all 3 languages")
+                logger.info(f"Transcribed text automatically translated to all 3 languages (source: {detected_translation_lang})")
             except Exception as e:
                 logger.warning(f"Failed to translate transcribed text: {str(e)}. Using original text for all languages.")
                 # Continue with original text if translation fails
@@ -480,8 +468,12 @@ async def translate_text(request: TranslationRequest):
     - Hindi (hi)
     - Korean (ko)
     
+    Translation logic:
+    - If source is Urdu/Hindi/Korean: First converts to English, then English to all 3 languages
+    - If source is English: Translates directly to all 3 languages
+    
     - **text**: Text to translate
-    - **source_language**: Source language code (en, hi, ko) or 'auto' for auto-detection (default: auto)
+    - **source_language**: Source language code (en, hi, ko, ur) or 'auto' for auto-detection (default: auto)
     - **target_language**: (Deprecated - translations are always returned in all languages)
     
     If source_language is 'auto' or not provided, the language will be automatically detected.
@@ -503,52 +495,25 @@ async def translate_text(request: TranslationRequest):
                 detail="Thread pool executor not initialized"
             )
         
-        # Detect source language first if needed
-        if source_lang is None or source_lang == "auto":
-            detected_lang, confidence = await asyncio.get_event_loop().run_in_executor(
-                executor,
-                lambda: translation_service.detect_language(request.text)
+        # Use the new translate_to_all_languages method which handles two-step translation
+        # This method automatically translates ur/hi/ko to English first, then to all languages
+        en_text, hi_text, ko_text, detected_lang, metadata = await asyncio.get_event_loop().run_in_executor(
+            executor,
+            lambda: translation_service.translate_to_all_languages(
+                text=request.text,
+                source_language=source_lang
             )
-            source_lang = detected_lang
-        else:
-            confidence = 1.0
-        
-        # Translate to all 3 languages in parallel for better performance
-        start_time = time.time()
-        
-        async def translate_to_language(target_lang: str) -> str:
-            """Helper function to translate to a specific language."""
-            if source_lang == target_lang:
-                return request.text
-            else:
-                translated_text, _, _ = await asyncio.get_event_loop().run_in_executor(
-                    executor,
-                    lambda: translation_service.translate(
-                        text=request.text,
-                        source_language=source_lang,
-                        target_language=target_lang
-                    )
-                )
-                return translated_text
-        
-        # Translate to all 3 languages in parallel
-        en_text, hi_text, ko_text = await asyncio.gather(
-            translate_to_language("en"),
-            translate_to_language("hi"),
-            translate_to_language("ko")
         )
-        
-        total_processing_time = time.time() - start_time
         
         response = TranslationResponse(
             english_text=en_text,
             hindi_text=hi_text,
             korean_text=ko_text,
-            source_language=source_lang,
-            detected_language=source_lang,
-            detection_confidence=confidence,
-            processing_time_sec=total_processing_time,
-            translation_applied=source_lang in ["en", "hi", "ko"]
+            source_language=detected_lang,
+            detected_language=detected_lang,
+            detection_confidence=metadata.get("detection_confidence", 1.0),
+            processing_time_sec=metadata.get("processing_time_sec", 0.0),
+            translation_applied=metadata.get("translation_applied", True)
         )
         
         return response

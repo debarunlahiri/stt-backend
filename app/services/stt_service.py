@@ -373,31 +373,32 @@ class STTService:
             detected_language = info.language or "unknown"
             language_probability = getattr(info, "language_probability", None)
             
-            # CRITICAL: Handle Urdu detection - Urdu and Hindi share similar characteristics
-            # If Urdu is detected and language was auto, force re-transcription with Hindi
-            # This ensures we get proper Hindi transcription, not just Hindi language code
-            # Only do this if language was not explicitly set to Hindi
+            # CRITICAL: Handle Urdu detection - Urdu is not directly supported for transcription
+            # If Urdu is detected and language was auto, force re-transcription with English
+            # This ensures we get proper English transcription, which can then be translated
+            # Only do this if language was not explicitly set
             original_language_was_auto = (language is None or language == "auto")
             if (detected_language == "ur" or detected_language.startswith("ur")) and original_language_was_auto:
-                logger.warning(
-                    f"Urdu detected ({detected_language}). Urdu is not supported. "
-                    f"Re-transcribing with Hindi (hi) forced."
+                logger.info(
+                    f"Urdu detected ({detected_language}). "
+                    f"Re-transcribing with English (en) to convert Urdu speech to English text."
                 )
                 
-                # Force Hindi language for re-transcription
-                transcription_kwargs["language"] = "hi"
+                # Force English language for re-transcription
+                transcription_kwargs["language"] = "en"
                 
-                # Re-transcribe with Hindi forced to get proper Hindi transcription
-                logger.info("Re-transcribing with Hindi language forced")
+                # Re-transcribe with English forced to get proper English transcription
+                logger.info("Re-transcribing with English language forced")
                 segments_list, info = model.transcribe(
                     audio_array,
                     **transcription_kwargs
                 )
                 
-                # Update detected language to Hindi
-                detected_language = "hi"
+                # Since we forced English transcription, the text is now in English
+                # Mark detected language as English for translation purposes
+                detected_language = "en"
                 language_probability = getattr(info, "language_probability", None)
-                logger.info("Re-transcription complete with Hindi language")
+                logger.info("Re-transcription complete: Urdu audio converted to English text")
             
             # Map similar languages to supported ones
             # Whisper may detect language variants (e.g., "en-US", "hi-IN") that need

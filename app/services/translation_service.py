@@ -2,17 +2,19 @@
 Translation Service Module
 
 This module provides offline translation capabilities using Argos Translate and language
-detection using langdetect. It supports translation between English, Hindi, and Korean.
+detection using langdetect. It supports translation between English, Hindi, Korean, and Urdu.
 
-The service automatically installs required translation packages on first use and
-provides thread-safe translation operations.
+For Urdu, Hindi, and Korean sources, translations are done through English:
+1. First translate source language to English
+2. Then translate English to all three target languages (English, Hindi, Korean)
+
+The service works fully offline and requires pre-installed translation packages.
 
 Author: Debarun Lahiri
 """
 
 import os
 import warnings
-import ssl
 
 # CRITICAL: Set environment variables BEFORE any imports
 # Prevent spacy and stanza from trying to download models (requires internet)
@@ -31,7 +33,8 @@ os.environ.setdefault('STANZA_CACHE_DIR', os.path.expanduser('~/.stanza_cache'))
 warnings.filterwarnings('ignore', message='.*SSL.*')
 warnings.filterwarnings('ignore', message='.*certificate.*')
 warnings.filterwarnings('ignore', message='.*443.*')
-warnings.filterwarnings('ignore', category=ssl.SSLError)
+# Note: ssl.SSLError is an Exception, not a Warning, so can't be filtered here
+# SSL errors will be caught in try-except blocks instead
 
 # Suppress spacy warnings - it's a dependency of argostranslate but we don't need its models
 warnings.filterwarnings('ignore', category=UserWarning, module='spacy')
@@ -104,11 +107,17 @@ class TranslationService:
     - English (en)
     - Hindi (hi)
     - Korean (ko)
+    - Urdu (ur)
     
     Supported translation pairs:
     - English ↔ Hindi
     - English ↔ Korean
-    - Hindi ↔ Korean
+    - English ↔ Urdu
+    - Hindi ↔ English
+    - Korean ↔ English
+    - Urdu ↔ English
+    - Hindi ↔ Korean (via English)
+    - Korean ↔ Hindi (via English)
     
     Author: Debarun Lahiri
     """
@@ -119,18 +128,22 @@ class TranslationService:
         "en": "English",
         "hi": "Hindi",
         "ko": "Korean",
+        "ur": "Urdu",
         "auto": "auto"  # Special value for auto-detection
     }
     
     # Supported translation pairs: All bidirectional translation pairs supported by the service
     # Each tuple represents (source_language, target_language)
+    # Note: For ur/hi/ko sources, translations go through English first
     SUPPORTED_PAIRS = [
         ("en", "hi"),  # English to Hindi
         ("hi", "en"),  # Hindi to English
         ("en", "ko"),  # English to Korean
         ("ko", "en"),  # Korean to English
-        ("hi", "ko"),  # Hindi to Korean
-        ("ko", "hi"),  # Korean to Hindi
+        ("en", "ur"),  # English to Urdu
+        ("ur", "en"),  # Urdu to English
+        ("hi", "ko"),  # Hindi to Korean (via English)
+        ("ko", "hi"),  # Korean to Hindi (via English)
     ]
     
     def __init__(self):
@@ -364,8 +377,8 @@ class TranslationService:
         It does NOT attempt to download packages from the internet.
         
         Args:
-            from_code: Source language code (e.g., "en", "hi", "ko")
-            to_code: Target language code (e.g., "en", "hi", "ko")
+            from_code: Source language code (e.g., "en", "hi", "ko", "ur")
+            to_code: Target language code (e.g., "en", "hi", "ko", "ur")
             
         Returns:
             True if package is installed, False otherwise
@@ -437,6 +450,8 @@ class TranslationService:
                     detected_lang = "hi"
                 elif detected_lang.startswith("ko"):
                     detected_lang = "ko"
+                elif detected_lang.startswith("ur"):
+                    detected_lang = "ur"
                 else:
                     # Default to English if language is completely unknown
                     detected_lang = "en"
@@ -465,8 +480,8 @@ class TranslationService:
         
         Args:
             text: Text to translate
-            source_language: Source language code (en, hi, ko) or None for auto-detect
-            target_language: Target language code (en, hi, ko)
+            source_language: Source language code (en, hi, ko, ur) or None for auto-detect
+            target_language: Target language code (en, hi, ko, ur)
             
         Returns:
             Tuple of (translated_text, detected_source_language, metadata)
@@ -604,12 +619,114 @@ class TranslationService:
             logger.error(f"Translation failed: {str(e)}")
             raise ValueError(f"Translation failed: {str(e)}")
     
+    def translate_to_all_languages(
+        self,
+        text: str,
+        source_language: Optional[str] = None
+    ) -> Tuple[str, str, str, str, Dict]:
+        """
+        Translate text to all three target languages (English, Hindi, Korean).
+        
+        If the source language is Urdu, Hindi, or Korean, this method will:
+        1. First translate the text to English
+        2. Then translate English to English, Hindi, and Korean
+        
+        If the source language is English, it will translate directly to all three languages.
+        
+        Args:
+            text: Text to translate
+            source_language: Source language code (en, hi, ko, ur) or None for auto-detect
+            
+        Returns:
+            Tuple of (english_text, hindi_text, korean_text, detected_source_language, metadata)
+            
+        Raises:
+            ValueError: If translation fails
+        """
+        if not text or not text.strip():
+            raise ValueError("Text cannot be empty")
+        
+        start_time = time.time()
+        
+        # Step 1: Detect source language if not provided
+        if source_language is None or source_language == "auto":
+            detected_lang, confidence = self.detect_language(text)
+            source_language = detected_lang
+        else:
+            # Validate source language
+            if source_language not in self.LANGUAGE_MAP:
+                raise ValueError(f"Unsupported source language: {source_language}")
+            confidence = 1.0
+        
+        # Step 2: If source is Urdu, Hindi, or Korean, translate to English first
+        intermediate_text = text
+        intermediate_lang = source_language
+        
+        if source_language in ["ur", "hi", "ko"]:
+            logger.info(f"Source language is {source_language}, translating to English first...")
+            try:
+                intermediate_text, _, _ = self.translate(
+                    text=text,
+                    source_language=source_language,
+                    target_language="en"
+                )
+                intermediate_lang = "en"
+                logger.info(f"Successfully translated {source_language} -> English")
+            except Exception as e:
+                logger.error(f"Failed to translate {source_language} to English: {str(e)}")
+                raise ValueError(f"Failed to translate {source_language} to English: {str(e)}")
+        
+        # Step 3: Translate from English to all three languages
+        # At this point, intermediate_text is in English (either original or translated)
+        # and intermediate_lang is "en"
+        en_text = intermediate_text  # English is already the intermediate text
+        
+        try:
+            # Translate English to Hindi
+            hi_text, _, _ = self.translate(
+                text=intermediate_text,
+                source_language="en",
+                target_language="hi"
+            )
+            
+            # Translate English to Korean
+            ko_text, _, _ = self.translate(
+                text=intermediate_text,
+                source_language="en",
+                target_language="ko"
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to translate to all languages: {str(e)}")
+            raise ValueError(f"Failed to translate to all languages: {str(e)}")
+        
+        processing_time = time.time() - start_time
+        
+        metadata = {
+            "source_language": source_language,
+            "intermediate_language": intermediate_lang,
+            "detection_confidence": confidence,
+            "processing_time_sec": processing_time,
+            "translation_applied": True,
+            "original_length": len(text),
+            "english_length": len(en_text),
+            "hindi_length": len(hi_text),
+            "korean_length": len(ko_text)
+        }
+        
+        logger.info(
+            f"Translated text from {source_language} to all languages "
+            f"(en, hi, ko) in {processing_time:.3f}s"
+        )
+        
+        return en_text, hi_text, ko_text, source_language, metadata
+    
     def get_supported_languages(self) -> list:
         """
         Get list of supported language codes.
         
         Returns:
-            List of supported language codes (e.g., ["en", "hi", "ko", "auto"])
+            List of supported language codes (e.g., ["en", "hi", "ko", "ur", "auto"])
         """
         return list(self.LANGUAGE_MAP.keys())
     

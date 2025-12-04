@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     model_pool_size: int = 4  # Number of model instances for concurrent processing
     
     # Supported languages
-    supported_languages: List[str] = ["en", "hi", "ko"]
+    supported_languages: List[str] = ["en", "hi", "ko", "ur"]
     
     # Audio settings
     max_file_size_mb: int = 500
