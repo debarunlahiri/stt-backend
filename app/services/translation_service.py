@@ -56,6 +56,19 @@ from typing import Optional, Dict, Tuple
 
 from langdetect import detect, detect_langs, LangDetectException
 
+# Initialize logger first
+logger = logging.getLogger(__name__)
+
+# Import transformers for NLLB-200 (primary translation engine)
+try:
+    import torch
+    from transformers import pipeline, AutoTokenizer, AutoModelForSeq2SeqLM
+    TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    TRANSFORMERS_AVAILABLE = False
+    torch = None
+    logger.warning("transformers library not available. NLLB-200 translation will not work. Install with: pip install transformers sentencepiece")
+
 # Import argostranslate after suppressing warnings and setting environment variables
 # Wrap in try-except to handle any spacy/stanza initialization errors gracefully
 # These libraries may try to download models or check internet even though we don't need them
@@ -67,9 +80,11 @@ try:
 except:
     pass
 
+ARGOS_AVAILABLE = False
 try:
     import argostranslate.package
     import argostranslate.translate
+    ARGOS_AVAILABLE = True
 except Exception as e:
     # If there's an import error, log it but continue - translation may still work
     import logging as log_module
@@ -84,13 +99,13 @@ except Exception as e:
     try:
         import argostranslate.package
         import argostranslate.translate
+        ARGOS_AVAILABLE = True
     except:
         # If it still fails, we'll handle it in the service initialization
+        ARGOS_AVAILABLE = False
         pass
 
 from app.config import settings
-
-logger = logging.getLogger(__name__)
 
 
 class TranslationService:
@@ -132,6 +147,15 @@ class TranslationService:
         "auto": "auto"  # Special value for auto-detection
     }
     
+    # NLLB-200 language code mapping: Maps our language codes to NLLB-200 language codes
+    # NLLB-200 uses specific language codes with script indicators
+    NLLB_LANGUAGE_MAP = {
+        "en": "eng_Latn",  # English (Latin script)
+        "hi": "hin_Deva",  # Hindi (Devanagari script)
+        "ko": "kor_Hang",  # Korean (Hangul script)
+        "ur": "urd_Arab",  # Urdu (Arabic script)
+    }
+    
     # Supported translation pairs: All bidirectional translation pairs supported by the service
     # Each tuple represents (source_language, target_language)
     # Note: For ur/hi/ko sources, translations go through English first
@@ -153,6 +177,8 @@ class TranslationService:
         This service works completely offline - it does NOT connect to the internet.
         Translation packages must be pre-installed on the system before running.
         
+        Uses NLLB-200 as primary translation engine (more accurate) with Argos Translate as fallback.
+        
         Packages are loaded from local disk storage:
         - macOS/Linux: ~/.local/share/argos-translate/packages
         - Windows: C:\\Users\\username\\.local\\share\\argos-translate\\packages
@@ -165,34 +191,62 @@ class TranslationService:
         self._initialization_attempted = False  # Track if initialization has been attempted
         self._packages_manifest_file = Path("./translation_packages.json")  # File to save installed packages list
         
-        # Step 1: Load installed packages from disk (fully offline)
+        # NLLB-200 model initialization
+        self._nllb_pipeline = None
+        self._nllb_tokenizer = None
+        self._nllb_model = None
+        self._use_nllb = settings.use_nllb_translation and TRANSFORMERS_AVAILABLE
+        
+        # Initialize NLLB-200 if enabled (WARNING: Resource intensive!)
+        if self._use_nllb:
+            logger.warning(
+                "NLLB-200 is enabled. This requires 8GB+ free RAM and 2GB+ disk space. "
+                "If you experience issues, set use_nllb_translation=False in config."
+            )
+            try:
+                self._initialize_nllb_model()
+                logger.info("NLLB-200 initialized successfully and will be used for translations")
+            except Exception as e:
+                error_msg = str(e)
+                logger.error(
+                    f"Failed to initialize NLLB-200 model: {error_msg[:300]}. "
+                    f"Falling back to Argos Translate automatically."
+                )
+                logger.info("To permanently disable NLLB-200, set use_nllb_translation=False in config.py")
+                self._use_nllb = False
+        else:
+            logger.info("NLLB-200 is disabled. Using Argos Translate for translations (lighter, more suitable for 16GB RAM systems).")
+        
+        # Step 1: Load installed packages from disk (fully offline) - for Argos fallback
         # This reads from local storage only - no internet required
         # Error handling is done inside _load_installed_packages_from_disk
-        self._load_installed_packages_from_disk()
+        if not self._use_nllb or ARGOS_AVAILABLE:
+            self._load_installed_packages_from_disk()
         
-        # Step 2: Initialize packages from local disk only (fully offline)
+        # Step 2: Initialize packages from local disk only (fully offline) - for Argos fallback
         # This does NOT attempt to connect to the internet
-        try:
-            self._initialize_translation_packages()
-        except Exception as e:
-            error_str = str(e).lower()
-            # Don't fail on spacy/stanza/ssl errors - these are non-critical dependencies
-            if any(x in error_str for x in ['spacy', 'stanza', 'ssl', 'certificate', '443', 'download', 'not initialized']):
-                logger.debug(f"Non-critical dependency warning during initialization: {str(e)[:200]}")
-                # Continue anyway - translation may still work
-                if not self._installed_packages:
-                    logger.info("Note: Translation packages should be pre-installed. See DOWNLOAD_TRANSLATION_MODELS.md")
-            else:
-                logger.warning(f"Failed to initialize translation packages from disk: {str(e)[:200]}")
-                logger.info("Translation packages must be pre-installed. See DOWNLOAD_TRANSLATION_MODELS.md for instructions.")
-            
-            # Service will still start but translation may fail if packages missing
-            if self._installed_packages:
-                logger.info(f"Found {len(self._installed_packages)} pre-installed packages from disk")
-            else:
-                logger.warning("No translation packages found. Translation features will not work until packages are installed.")
-        finally:
-            self._initialization_attempted = True
+        if not self._use_nllb or ARGOS_AVAILABLE:
+            try:
+                self._initialize_translation_packages()
+            except Exception as e:
+                error_str = str(e).lower()
+                # Don't fail on spacy/stanza/ssl errors - these are non-critical dependencies
+                if any(x in error_str for x in ['spacy', 'stanza', 'ssl', 'certificate', '443', 'download', 'not initialized']):
+                    logger.debug(f"Non-critical dependency warning during initialization: {str(e)[:200]}")
+                    # Continue anyway - translation may still work
+                    if not self._installed_packages:
+                        logger.info("Note: Translation packages should be pre-installed. See DOWNLOAD_TRANSLATION_MODELS.md")
+                else:
+                    logger.warning(f"Failed to initialize translation packages from disk: {str(e)[:200]}")
+                    logger.info("Translation packages must be pre-installed. See DOWNLOAD_TRANSLATION_MODELS.md for instructions.")
+                
+                # Service will still start but translation may fail if packages missing
+                if self._installed_packages:
+                    logger.info(f"Found {len(self._installed_packages)} pre-installed packages from disk")
+                else:
+                    logger.warning("No translation packages found. Translation features will not work until packages are installed.")
+        
+        self._initialization_attempted = True
     
     def _get_packages_storage_path(self) -> str:
         """
@@ -311,6 +365,212 @@ class TranslationService:
             logger.debug(f"Saved packages manifest to {self._packages_manifest_file}")
         except Exception as e:
             logger.warning(f"Failed to save packages manifest: {str(e)}")
+    
+    def _initialize_nllb_model(self) -> None:
+        """
+        Initialize NLLB-200 model for offline translation.
+        
+        This method loads the NLLB-200 model from local path or HuggingFace cache.
+        Works completely offline if model is already downloaded.
+        
+        WARNING: NLLB-200 requires significant resources:
+        - RAM: 8GB+ free memory recommended (model size ~2.4GB in memory)
+        - Disk: 2GB+ for model files
+        - Not recommended for systems with less than 32GB total RAM
+        """
+        if not TRANSFORMERS_AVAILABLE:
+            raise ImportError("transformers library is not installed. Install with: pip install transformers sentencepiece")
+        
+        # Check available memory (warning only, don't block)
+        # psutil is optional - if not installed, skip memory check
+        try:
+            import psutil
+            available_memory_gb = psutil.virtual_memory().available / (1024**3)
+            total_memory_gb = psutil.virtual_memory().total / (1024**3)
+            
+            if total_memory_gb < 32:
+                logger.warning(
+                    f"System has {total_memory_gb:.1f}GB total RAM. "
+                    f"NLLB-200 requires 8GB+ free RAM and is not recommended for systems with <32GB total RAM. "
+                    f"Consider using Argos Translate instead (set use_nllb_translation=False)."
+                )
+            
+            if available_memory_gb < 8:
+                logger.error(
+                    f"Only {available_memory_gb:.1f}GB free RAM available. "
+                    f"NLLB-200 requires 8GB+ free RAM. "
+                    f"Falling back to Argos Translate."
+                )
+                raise RuntimeError(f"Insufficient memory: {available_memory_gb:.1f}GB free (requires 8GB+)")
+                
+            logger.info(f"System memory check passed: {available_memory_gb:.1f}GB free of {total_memory_gb:.1f}GB total")
+        except ImportError:
+            # psutil not available, skip memory check (optional dependency)
+            logger.debug("psutil not available, skipping memory check. Install with: pip install psutil")
+        except RuntimeError:
+            # Re-raise memory errors
+            raise
+        except Exception as e:
+            logger.warning(f"Memory check failed: {str(e)}. Proceeding with caution.")
+        
+        model_path = settings.nllb_model_path
+        cache_dir = settings.nllb_cache_dir
+        
+        # Check if model_path is a local path
+        local_path = Path(model_path)
+        if local_path.exists() and local_path.is_dir():
+            # Use local path directly
+            logger.info(f"Loading NLLB-200 model from local path: {model_path}")
+            model_path = str(local_path)
+            use_local_files_only = True
+        else:
+            # Check if model exists in cache
+            try:
+                from transformers.utils import TRANSFORMERS_CACHE
+                default_cache = TRANSFORMERS_CACHE
+            except ImportError:
+                # Fallback to default HuggingFace cache location
+                default_cache = os.path.expanduser("~/.cache/huggingface")
+            
+            cache_path = Path(cache_dir) if cache_dir else Path(default_cache)
+            model_cache_path = cache_path / "models--facebook--nllb-200-distilled-600M"
+            
+            if model_cache_path.exists():
+                logger.info(f"Loading NLLB-200 model from cache: {model_cache_path}")
+                # Find the snapshot directory
+                snapshots_dir = model_cache_path / "snapshots"
+                if snapshots_dir.exists():
+                    snapshots = list(snapshots_dir.iterdir())
+                    if snapshots:
+                        model_path = str(snapshots[0])
+                        use_local_files_only = True
+                    else:
+                        use_local_files_only = False
+                else:
+                    use_local_files_only = False
+            else:
+                logger.warning(f"NLLB-200 model not found in cache. Will attempt to load from HuggingFace (may require internet).")
+                logger.warning(f"Cache directory: {cache_path}")
+                use_local_files_only = False
+        
+        try:
+            logger.info(f"Initializing NLLB-200 tokenizer and model...")
+            logger.warning(
+                "NLLB-200 is resource-intensive. If you experience issues, "
+                "set use_nllb_translation=False in config to use Argos Translate instead."
+            )
+            
+            # Load tokenizer with low_cpu_mem_usage to reduce memory footprint
+            self._nllb_tokenizer = AutoTokenizer.from_pretrained(
+                model_path,
+                cache_dir=cache_dir,
+                local_files_only=use_local_files_only
+            )
+            
+            # Load model with optimizations for lower memory usage
+            # Use low_cpu_mem_usage and torch_dtype to reduce memory footprint
+            try:
+                self._nllb_model = AutoModelForSeq2SeqLM.from_pretrained(
+                    model_path,
+                    cache_dir=cache_dir,
+                    local_files_only=use_local_files_only,
+                    low_cpu_mem_usage=True,
+                    torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32
+                )
+            except Exception as load_error:
+                # If loading with optimizations fails, try standard loading
+                logger.warning(f"Optimized loading failed, trying standard loading: {str(load_error)}")
+                self._nllb_model = AutoModelForSeq2SeqLM.from_pretrained(
+                    model_path,
+                    cache_dir=cache_dir,
+                    local_files_only=use_local_files_only
+                )
+            
+            # Move model to CPU explicitly (M2 Mac doesn't have CUDA, use CPU)
+            if settings.device == "cpu" or not torch.cuda.is_available():
+                self._nllb_model = self._nllb_model.to("cpu")
+                logger.info("NLLB-200 model loaded on CPU")
+            else:
+                self._nllb_model = self._nllb_model.to("cuda")
+                logger.info("NLLB-200 model loaded on CUDA")
+            
+            # Set pipeline to True to indicate model is loaded (we'll use model directly)
+            self._nllb_pipeline = True  # Use as a flag to indicate model is loaded
+            
+            logger.info("NLLB-200 model initialized successfully")
+        except RuntimeError as e:
+            error_msg = str(e)
+            if "out of memory" in error_msg.lower() or "memory" in error_msg.lower():
+                logger.error(
+                    f"NLLB-200 failed due to insufficient memory: {error_msg}. "
+                    f"Please set use_nllb_translation=False in config to use Argos Translate instead."
+                )
+            raise
+        except Exception as e:
+            logger.error(
+                f"Failed to initialize NLLB-200 model: {str(e)}. "
+                f"Falling back to Argos Translate. To disable NLLB-200, set use_nllb_translation=False in config."
+            )
+            raise
+    
+    def _translate_with_nllb(
+        self,
+        text: str,
+        source_language: str,
+        target_language: str
+    ) -> str:
+        """
+        Translate text using NLLB-200 model.
+        
+        Args:
+            text: Text to translate
+            source_language: Source language code (en, hi, ko, ur)
+            target_language: Target language code (en, hi, ko, ur)
+            
+        Returns:
+            Translated text
+        """
+        if not self._nllb_pipeline:
+            raise ValueError("NLLB-200 model is not initialized")
+        
+        # Map language codes to NLLB-200 codes
+        src_nllb = self.NLLB_LANGUAGE_MAP.get(source_language)
+        tgt_nllb = self.NLLB_LANGUAGE_MAP.get(target_language)
+        
+        if not src_nllb or not tgt_nllb:
+            raise ValueError(f"Unsupported language pair for NLLB-200: {source_language} -> {target_language}")
+        
+        try:
+            # Use model and tokenizer directly for translation
+            # Set the source and target language tokens
+            self._nllb_tokenizer.src_lang = src_nllb
+            
+            # Tokenize the input text
+            inputs = self._nllb_tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
+            
+            # Move inputs to the same device as the model
+            if settings.device == "cuda" and next(self._nllb_model.parameters()).is_cuda:
+                inputs = {k: v.cuda() for k, v in inputs.items()}
+            
+            # Generate translation
+            if torch is None:
+                raise ImportError("torch is not available")
+            with torch.no_grad():
+                generated_tokens = self._nllb_model.generate(
+                    **inputs,
+                    forced_bos_token_id=self._nllb_tokenizer.lang_code_to_id[tgt_nllb],
+                    max_length=512,
+                    num_beams=5,
+                    early_stopping=True
+                )
+            
+            # Decode the generated tokens
+            translated_text = self._nllb_tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)[0]
+            
+            return translated_text
+        except Exception as e:
+            logger.error(f"NLLB-200 translation failed: {str(e)}")
+            raise ValueError(f"NLLB-200 translation failed: {str(e)}")
     
     def _initialize_translation_packages(self) -> None:
         """
@@ -522,49 +782,55 @@ class TranslationService:
                 f"Supported pairs: {self.SUPPORTED_PAIRS}"
             )
         
-        # Step 5: Ensure translation packages are initialized
-        # Reload packages from disk if not already initialized
-        if not self._installed_packages:
-            logger.info("No translation packages found. Checking disk for installed packages...")
+        start_time = time.time()
+        translation_engine = None
+        
+        # Step 5: Try NLLB-200 first (if enabled and available)
+        if self._use_nllb and self._nllb_pipeline:
             try:
-                self._initialize_translation_packages()
+                logger.info(f"Translating with NLLB-200: {source_language} -> {target_language}")
+                translated_text = self._translate_with_nllb(text, source_language, target_language)
+                translation_engine = "nllb-200"
+                logger.info(f"NLLB-200 translation successful")
             except Exception as e:
-                logger.error(f"Failed to load translation packages: {str(e)}")
-                raise ValueError(
-                    f"Translation packages are not installed. "
-                    f"This server runs in offline mode. Please install packages manually. "
-                    f"Error: {str(e)}"
-                )
+                logger.warning(f"NLLB-200 translation failed: {str(e)}. Falling back to Argos Translate.")
+                translation_engine = None
         
-        # Step 6: Verify the specific pair is installed (offline mode - no download attempts)
-        if (source_language, target_language) not in self._installed_packages:
-            logger.info(f"Translation package for {source_language} -> {target_language} not in cache. Checking disk...")
-            if not self._check_package_installed(source_language, target_language):
+        # Step 6: Fallback to Argos Translate if NLLB-200 failed or is not available
+        if translation_engine is None:
+            if not ARGOS_AVAILABLE:
                 raise ValueError(
-                    f"Translation package for {source_language} -> {target_language} is not installed. "
-                    f"Installed packages: {self._installed_packages}. "
-                    f"This server runs in offline mode. Install packages manually on a machine with internet access."
+                    "Neither NLLB-200 nor Argos Translate is available. "
+                    "Please ensure at least one translation engine is properly configured."
                 )
-        
-        try:
-            start_time = time.time()
             
-            # Step 7: Get installed packages from argostranslate
-            # This ensures we have the latest list after potential installations
-            installed_packages = argostranslate.package.get_installed_packages()
+            # Ensure translation packages are initialized
+            if not self._installed_packages:
+                logger.info("No translation packages found. Checking disk for installed packages...")
+                try:
+                    self._initialize_translation_packages()
+                except Exception as e:
+                    logger.error(f"Failed to load translation packages: {str(e)}")
+                    raise ValueError(
+                        f"Translation packages are not installed. "
+                        f"This server runs in offline mode. Please install packages manually. "
+                        f"Error: {str(e)}"
+                    )
             
-            # Step 8: Find the package object for this specific translation pair
-            installed_packages_list = argostranslate.package.get_installed_packages()
-            package = next(
-                (pkg for pkg in installed_packages_list 
-                 if pkg.from_code == source_language and pkg.to_code == target_language),
-                None
-            )
+            # Verify the specific pair is installed (offline mode - no download attempts)
+            if (source_language, target_language) not in self._installed_packages:
+                logger.info(f"Translation package for {source_language} -> {target_language} not in cache. Checking disk...")
+                if not self._check_package_installed(source_language, target_language):
+                    raise ValueError(
+                        f"Translation package for {source_language} -> {target_language} is not installed. "
+                        f"Installed packages: {self._installed_packages}. "
+                        f"This server runs in offline mode. Install packages manually on a machine with internet access."
+                    )
             
-            # Step 9: If package not found, refresh the list and try again
-            # This handles cases where packages were just installed
-            if package is None:
-                logger.warning(f"Package {source_language} -> {target_language} not found in installed packages. Refreshing...")
+            try:
+                logger.info(f"Translating with Argos Translate: {source_language} -> {target_language}")
+                
+                # Get installed packages from argostranslate
                 installed_packages_list = argostranslate.package.get_installed_packages()
                 package = next(
                     (pkg for pkg in installed_packages_list 
@@ -572,52 +838,65 @@ class TranslationService:
                     None
                 )
                 
+                # If package not found, refresh the list and try again
                 if package is None:
-                    raise ValueError(
-                        f"Translation package for {source_language} -> {target_language} not found. "
-                        f"Installed packages: {[(p.from_code, p.to_code) for p in installed_packages_list]}. "
-                        f"Please install the required package."
+                    logger.warning(f"Package {source_language} -> {target_language} not found in installed packages. Refreshing...")
+                    installed_packages_list = argostranslate.package.get_installed_packages()
+                    package = next(
+                        (pkg for pkg in installed_packages_list 
+                         if pkg.from_code == source_language and pkg.to_code == target_language),
+                        None
                     )
-            
-            # Step 10: Perform the actual translation
-            try:
-                # Try using the package's translate method first (preferred method)
-                translated_text = package.translate(text)
-            except AttributeError as e:
-                # Fallback to using argostranslate.translate.translate() if package.translate doesn't work
-                # This handles different versions of argostranslate that may have different APIs
-                logger.warning(f"package.translate() failed, trying argostranslate.translate.translate(): {str(e)}")
+                    
+                    if package is None:
+                        raise ValueError(
+                            f"Translation package for {source_language} -> {target_language} not found. "
+                            f"Installed packages: {[(p.from_code, p.to_code) for p in installed_packages_list]}. "
+                            f"Please install the required package."
+                        )
+                
+                # Perform the actual translation
                 try:
-                    translated_text = argostranslate.translate.translate(text, source_language, target_language)
-                except Exception as e2:
-                    raise ValueError(
-                        f"Translation failed: {str(e2)}. "
-                        f"Package: {package}, from_code: {source_language}, to_code: {target_language}"
-                    )
-            
-            # Step 11: Calculate processing time and build metadata
-            processing_time = time.time() - start_time
-            
-            metadata = {
-                "source_language": source_language,
-                "target_language": target_language,
-                "detection_confidence": confidence,
-                "processing_time_sec": processing_time,
-                "translation_applied": True,
-                "original_length": len(text),
-                "translated_length": len(translated_text)
-            }
-            
-            logger.info(
-                f"Translated text from {source_language} to {target_language} "
-                f"({processing_time:.3f}s)"
-            )
-            
-            return translated_text, source_language, metadata
-            
-        except Exception as e:
-            logger.error(f"Translation failed: {str(e)}")
-            raise ValueError(f"Translation failed: {str(e)}")
+                    # Try using the package's translate method first (preferred method)
+                    translated_text = package.translate(text)
+                except AttributeError as e:
+                    # Fallback to using argostranslate.translate.translate() if package.translate doesn't work
+                    logger.warning(f"package.translate() failed, trying argostranslate.translate.translate(): {str(e)}")
+                    try:
+                        translated_text = argostranslate.translate.translate(text, source_language, target_language)
+                    except Exception as e2:
+                        raise ValueError(
+                            f"Translation failed: {str(e2)}. "
+                            f"Package: {package}, from_code: {source_language}, to_code: {target_language}"
+                        )
+                
+                translation_engine = "argos-translate"
+                logger.info(f"Argos Translate translation successful")
+                
+            except Exception as e:
+                logger.error(f"Argos Translate translation failed: {str(e)}")
+                raise ValueError(f"Translation failed: {str(e)}")
+        
+        # Step 7: Calculate processing time and build metadata
+        processing_time = time.time() - start_time
+        
+        metadata = {
+            "source_language": source_language,
+            "target_language": target_language,
+            "detection_confidence": confidence,
+            "processing_time_sec": processing_time,
+            "translation_applied": True,
+            "translation_engine": translation_engine,
+            "original_length": len(text),
+            "translated_length": len(translated_text)
+        }
+        
+        logger.info(
+            f"Translated text from {source_language} to {target_language} "
+            f"using {translation_engine} ({processing_time:.3f}s)"
+        )
+        
+        return translated_text, source_language, metadata
     
     def translate_to_all_languages(
         self,

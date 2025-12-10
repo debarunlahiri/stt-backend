@@ -60,7 +60,24 @@ else
 fi
 echo ""
 
-echo -e "${GREEN}Step 3: Collecting Stanza Models (Optional)...${NC}"
+echo -e "${GREEN}Step 3: Collecting NLLB-200 Translation Models...${NC}"
+
+# Check if NLLB-200 models exist in HuggingFace cache
+HF_CACHE="${HOME}/.cache/huggingface"
+NLLB_MODEL_PATH="${HF_CACHE}/models--facebook--nllb-200-distilled-600M"
+if [ -d "${NLLB_MODEL_PATH}" ]; then
+    mkdir -p "${OUTPUT_DIR}/nllb-models"
+    echo "Copying NLLB-200 models..."
+    cp -r "${NLLB_MODEL_PATH}" "${OUTPUT_DIR}/nllb-models/" 2>/dev/null || true
+    NLLB_SIZE=$(du -sh "${OUTPUT_DIR}/nllb-models" | cut -f1)
+    echo -e "${GREEN}✓ NLLB-200 models copied (${NLLB_SIZE})${NC}"
+else
+    echo -e "${YELLOW}NLLB-200 models not found in cache${NC}"
+    echo -e "${YELLOW}Note: Download models with: python -c \"from transformers import AutoTokenizer, AutoModelForSeq2SeqLM; AutoTokenizer.from_pretrained('facebook/nllb-200-distilled-600M'); AutoModelForSeq2SeqLM.from_pretrained('facebook/nllb-200-distilled-600M')\"${NC}"
+fi
+echo ""
+
+echo -e "${GREEN}Step 4: Collecting Stanza Models (Optional)...${NC}"
 
 # Check if Stanza models exist
 STANZA_MODELS="${HOME}/stanza_resources"
@@ -75,7 +92,7 @@ else
 fi
 echo ""
 
-echo -e "${GREEN}Step 4: Collecting HuggingFace Cache (Optional)...${NC}"
+echo -e "${GREEN}Step 5: Collecting HuggingFace Cache (Optional)...${NC}"
 
 # Check if HuggingFace cache exists
 HF_CACHE="${HOME}/.cache/huggingface"
@@ -101,7 +118,7 @@ else
 fi
 echo ""
 
-echo -e "${GREEN}Step 5: Creating Archive Files...${NC}"
+echo -e "${GREEN}Step 6: Creating Archive Files...${NC}"
 
 # Create individual archives
 cd "${OUTPUT_DIR}"
@@ -114,6 +131,12 @@ if [ -d "translation-packages" ] && [ "$(ls -A translation-packages)" ]; then
     echo "Creating translation-packages.tar.gz..."
     tar -czf "${SCRIPT_DIR}/translation-packages-${TIMESTAMP}.tar.gz" translation-packages/
     echo -e "${GREEN}✓ Created translation-packages-${TIMESTAMP}.tar.gz${NC}"
+fi
+
+if [ -d "nllb-models" ] && [ "$(ls -A nllb-models)" ]; then
+    echo "Creating nllb-models.tar.gz..."
+    tar -czf "${SCRIPT_DIR}/nllb-models-${TIMESTAMP}.tar.gz" nllb-models/
+    echo -e "${GREEN}✓ Created nllb-models-${TIMESTAMP}.tar.gz${NC}"
 fi
 
 if [ -d "stanza-models" ] && [ "$(ls -A stanza-models)" ]; then

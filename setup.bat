@@ -95,10 +95,19 @@ if errorlevel 1 (
 
 python -c "import argostranslate; print('OK argostranslate')" >nul 2>&1
 if errorlevel 1 (
-    echo [ERROR] argostranslate not found
-    exit /b 1
+    echo [WARNING] argostranslate not found (used as fallback)
 )
-echo [OK] All required packages verified.
+
+python -c "import transformers; print('OK transformers (NLLB-200 support)')" >nul 2>&1
+if errorlevel 1 (
+    echo [WARNING] transformers not found (NLLB-200 will not work, but Argos Translate fallback available)
+)
+
+python -c "import sentencepiece; print('OK sentencepiece (NLLB-200 support)')" >nul 2>&1
+if errorlevel 1 (
+    echo [WARNING] sentencepiece not found (NLLB-200 will not work)
+)
+echo [OK] Core packages verified.
 echo.
 
 REM Step 7: Check FFmpeg

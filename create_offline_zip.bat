@@ -43,7 +43,21 @@ if not exist "%TRANSLATION_PACKAGES%" (
 )
 echo.
 
-echo Step 3: Collecting Stanza Models (Optional)...
+echo Step 3: Collecting NLLB-200 Translation Models...
+set HF_CACHE=%USERPROFILE%\.cache\huggingface
+set NLLB_MODEL_PATH=%HF_CACHE%\models--facebook--nllb-200-distilled-600M
+if exist "%NLLB_MODEL_PATH%" (
+    if not exist "%OUTPUT_DIR%\nllb-models" mkdir "%OUTPUT_DIR%\nllb-models"
+    echo Copying NLLB-200 models...
+    xcopy /E /I /Y "%NLLB_MODEL_PATH%" "%OUTPUT_DIR%\nllb-models\models--facebook--nllb-200-distilled-600M\"
+    echo [OK] NLLB-200 models copied
+) else (
+    echo WARNING: NLLB-200 models not found in cache
+    echo Note: Download models with: python -c "from transformers import AutoTokenizer, AutoModelForSeq2SeqLM; AutoTokenizer.from_pretrained('facebook/nllb-200-distilled-600M'); AutoModelForSeq2SeqLM.from_pretrained('facebook/nllb-200-distilled-600M')"
+)
+echo.
+
+echo Step 4: Collecting Stanza Models (Optional)...
 set STANZA_MODELS=%USERPROFILE%\stanza_resources
 if exist "%STANZA_MODELS%" (
     if not exist "%OUTPUT_DIR%\stanza-models" mkdir "%OUTPUT_DIR%\stanza-models"
@@ -55,7 +69,7 @@ if exist "%STANZA_MODELS%" (
 )
 echo.
 
-echo Step 4: Creating Archive Files...
+echo Step 5: Creating Archive Files...
 cd /d "%OUTPUT_DIR%"
 
 echo Creating whisper-models.zip...
@@ -66,6 +80,12 @@ if exist "translation-packages" (
     echo Creating translation-packages.zip...
     powershell Compress-Archive -Path translation-packages -DestinationPath "%SCRIPT_DIR%\translation-packages-%TIMESTAMP%.zip" -Force
     echo [OK] Created translation-packages-%TIMESTAMP%.zip
+)
+
+if exist "nllb-models" (
+    echo Creating nllb-models.zip...
+    powershell Compress-Archive -Path nllb-models -DestinationPath "%SCRIPT_DIR%\nllb-models-%TIMESTAMP%.zip" -Force
+    echo [OK] Created nllb-models-%TIMESTAMP%.zip
 )
 
 if exist "stanza-models" (

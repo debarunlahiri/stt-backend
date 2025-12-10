@@ -83,8 +83,10 @@ echo -e "${YELLOW}Step 6: Verifying installation...${NC}"
 python -c "import pydantic_settings; print('✓ pydantic_settings')" || { echo -e "${RED}Error: pydantic_settings not found${NC}"; exit 1; }
 python -c "import fastapi; print('✓ fastapi')" || { echo -e "${RED}Error: fastapi not found${NC}"; exit 1; }
 python -c "import faster_whisper; print('✓ faster-whisper')" || { echo -e "${RED}Error: faster-whisper not found${NC}"; exit 1; }
-python -c "import argostranslate; print('✓ argostranslate')" || { echo -e "${RED}Error: argostranslate not found${NC}"; exit 1; }
-echo -e "${GREEN}All required packages verified.${NC}"
+python -c "import argostranslate; print('✓ argostranslate')" || { echo -e "${YELLOW}Warning: argostranslate not found (used as fallback)${NC}"; }
+python -c "import transformers; print('✓ transformers (NLLB-200 support)')" || { echo -e "${YELLOW}Warning: transformers not found (NLLB-200 will not work, but Argos Translate fallback available)${NC}"; }
+python -c "import sentencepiece; print('✓ sentencepiece (NLLB-200 support)')" || { echo -e "${YELLOW}Warning: sentencepiece not found (NLLB-200 will not work)${NC}"; }
+echo -e "${GREEN}Core packages verified.${NC}"
 echo ""
 
 # Step 7: Check FFmpeg

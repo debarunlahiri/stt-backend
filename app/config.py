@@ -64,6 +64,20 @@ class Settings(BaseSettings):
     # Supported languages
     supported_languages: List[str] = ["en", "hi", "ko", "ur"]
     
+    # Translation settings
+    # Use NLLB-200 for translation (more accurate than Argos Translate)
+    # WARNING: NLLB-200 requires significant RAM (8GB+ free) and disk space (2GB+)
+    # Recommended: Only enable on systems with 32GB+ RAM
+    # Set to False to use Argos Translate instead (lighter, recommended for 16GB RAM systems)
+    use_nllb_translation: bool = False  # Disabled by default - too resource intensive
+    # NLLB model name or local path
+    # Model: facebook/nllb-200-distilled-600M (requires 8GB+ RAM and 2GB+ disk)
+    # If set to a local path, model will be loaded offline
+    # Example: "./models/nllb-200-distilled-600M" or "facebook/nllb-200-distilled-600M"
+    nllb_model_path: Optional[str] = "facebook/nllb-200-distilled-600M"
+    # Cache directory for NLLB models (HuggingFace cache)
+    nllb_cache_dir: Optional[str] = "./models"
+    
     # Audio settings
     max_file_size_mb: int = 500
     max_audio_duration_seconds: int = 60  # 1 minute
